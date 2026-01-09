@@ -31,7 +31,9 @@ class OSSClient:
         access_key_id: str,
         access_key_secret: str,
         bucket_name: str,
-        endpoint: str
+        endpoint: str,
+        endpoint_internal: Optional[str] = None,
+        cdn_domain: Optional[str] = None
     ):
         """初始化 OSS 客户端
         
@@ -39,15 +41,20 @@ class OSSClient:
             access_key_id: 阿里云 AccessKey ID
             access_key_secret: 阿里云 AccessKey Secret
             bucket_name: OSS Bucket 名称
-            endpoint: OSS Endpoint（如：oss-cn-wuhan-lr.aliyuncs.com）
+            endpoint: OSS 外网 Endpoint（如：oss-cn-wuhan-lr.aliyuncs.com）
+            endpoint_internal: OSS 内网 Endpoint（可选，同地域访问更快更便宜）
+            cdn_domain: CDN 加速域名（可选，用于加速访问）
         """
         self.bucket_name = bucket_name
         self.endpoint = endpoint
+        self.endpoint_internal = endpoint_internal
+        self.cdn_domain = cdn_domain
         
         # 创建认证对象
         auth = oss2.Auth(access_key_id, access_key_secret)
         
-        # 创建 Bucket 对象
+        # 创建 Bucket 对象（优先使用内网 Endpoint，如果配置了的话）
+        # 注意：内网 Endpoint 只能在同地域的 ECS 上使用，外网访问必须用外网 Endpoint
         self.bucket = oss2.Bucket(auth, endpoint, bucket_name)
     
     def upload_audio(
@@ -88,9 +95,15 @@ class OSSClient:
                 return None
             
             # 生成公网访问 URL
-            # 注意：endpoint 可能包含 http:// 或 https://，需要处理
-            endpoint_clean = self.endpoint.replace('http://', '').replace('https://', '')
-            public_url = f"https://{self.bucket_name}.{endpoint_clean}/{remote_path}"
+            # 优先使用 CDN 域名（如果配置了），否则使用外网 Endpoint
+            if self.cdn_domain:
+                # 使用 CDN 域名（需要确保 CDN 已配置并指向 OSS）
+                cdn_clean = self.cdn_domain.replace('http://', '').replace('https://', '')
+                public_url = f"https://{cdn_clean}/{remote_path}"
+            else:
+                # 使用外网 Endpoint
+                endpoint_clean = self.endpoint.replace('http://', '').replace('https://', '')
+                public_url = f"https://{self.bucket_name}.{endpoint_clean}/{remote_path}"
             
             console.print(f"[green]✅ 上传成功[/green]")
             console.print(f"[dim]   公网 URL: {public_url[:80]}...[/dim]")

@@ -43,7 +43,19 @@ class Settings(BaseSettings):
     oss_access_key_id: str = ""  # 阿里云 OSS AccessKey ID
     oss_access_key_secret: str = ""  # 阿里云 OSS AccessKey Secret
     oss_bucket_name: str = ""  # OSS Bucket 名称
-    oss_endpoint: str = ""  # OSS Endpoint
+    oss_endpoint: str = ""  # OSS 外网 Endpoint（公网访问）
+    oss_endpoint_internal: str = ""  # OSS 内网 Endpoint（同地域访问，更快更便宜）
+    oss_region: str = ""  # OSS 存储地域（如：cn-hangzhou, cn-wuhan）
+    oss_cdn_domain: str = ""  # OSS CDN 加速域名（可选，用于加速访问）
+    
+    def _clean_config_value(self, value: str) -> str:
+        """清理配置值（去除注释和空白）"""
+        if not value:
+            return ""
+        # 去除行内注释（# 后面的内容）
+        if '#' in value:
+            value = value.split('#')[0]
+        return value.strip()
     oss_enable_fallback: bool = False  # 是否启用 OSS 兜底方案
     
     # ============ 临时文件配置 ============
@@ -75,8 +87,9 @@ class Settings(BaseSettings):
             self.oss_access_key_id,
             self.oss_access_key_secret,
             self.oss_bucket_name,
-            self.oss_endpoint,
+            self.oss_endpoint,  # 外网 Endpoint 必需
         ]
+        # 内网 Endpoint 和地域可选，但推荐配置
         return all(required_fields)
 
 

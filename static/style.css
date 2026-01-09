@@ -90,7 +90,65 @@ body {
 .form {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 30px;
+}
+
+/* 配置分组 */
+.form-section {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    background: #fafafa;
+}
+
+.form-section h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 18px;
+    color: #667eea;
+    border-bottom: 2px solid #667eea;
+    padding-bottom: 8px;
+}
+
+.form-section .subtitle {
+    color: #666;
+    font-size: 13px;
+    margin-bottom: 20px;
+}
+
+/* 提供商设置区域 */
+.provider-settings {
+    margin-top: 15px;
+    padding: 15px;
+    background: white;
+    border-radius: 6px;
+    border-left: 3px solid #667eea;
+}
+
+/* 信息提示框 */
+.info-box {
+    background: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+.info-box strong {
+    color: #1976d2;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.info-box ul {
+    margin: 10px 0 0 0;
+    padding-left: 20px;
+    color: #555;
+}
+
+.info-box li {
+    margin-bottom: 8px;
+    line-height: 1.6;
 }
 
 .form-group {
@@ -130,6 +188,36 @@ body {
 .form-group textarea {
     resize: vertical;
     min-height: 100px;
+}
+
+/* 复选框样式 */
+.form-group input[type="checkbox"] {
+    width: auto;
+    margin-right: 8px;
+    cursor: pointer;
+    transform: scale(1.2);
+}
+
+.form-group label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-weight: 500;
+    padding: 10px;
+    background: white;
+    border-radius: 6px;
+    border: 2px solid #e0e0e0;
+    transition: border-color 0.3s;
+}
+
+.form-group label:has(input[type="checkbox"]):hover {
+    border-color: #667eea;
+}
+
+.form-group input[type="checkbox"]:checked + label,
+.form-group label:has(input[type="checkbox"]:checked) {
+    border-color: #667eea;
+    background: #f0f4ff;
 }
 
 .form-hint {

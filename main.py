@@ -227,7 +227,9 @@ def config_check():
                     access_key_id=settings.oss_access_key_id,
                     access_key_secret=settings.oss_access_key_secret,
                     bucket_name=settings.oss_bucket_name,
-                    endpoint=settings.oss_endpoint
+                    endpoint=settings.oss_endpoint,
+                    endpoint_internal=settings.oss_endpoint_internal if settings.oss_endpoint_internal else None,
+                    cdn_domain=settings.oss_cdn_domain if settings.oss_cdn_domain else None
                 )
                 if oss_client.test_connection():
                     console.print(f"[green]  ✅ OSS 连接正常[/green]")

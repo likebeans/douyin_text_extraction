@@ -244,7 +244,9 @@ class ASRClient:
                 access_key_id=settings.oss_access_key_id,
                 access_key_secret=settings.oss_access_key_secret,
                 bucket_name=settings.oss_bucket_name,
-                endpoint=settings.oss_endpoint
+                endpoint=settings.oss_endpoint,
+                endpoint_internal=settings.oss_endpoint_internal if settings.oss_endpoint_internal else None,
+                cdn_domain=settings.oss_cdn_domain if settings.oss_cdn_domain else None
             )
             
             upload_result = oss_client.upload_audio(audio_path)
