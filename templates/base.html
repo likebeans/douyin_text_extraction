@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}抖音视频文本提取工具{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🎬 抖音视频文本提取工具</h1>
+            <nav class="nav">
+                <a href="{{ url_for('index') }}">首页</a>
+                <a href="{{ url_for('config_page') }}">配置</a>
+            </nav>
+        </header>
+        
+        <main class="main">
+            {% block content %}{% endblock %}
+        </main>
+        
+        <footer class="footer">
+            <p>快速将抖音视频转换为可编辑文本</p>
+        </footer>
+    </div>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>

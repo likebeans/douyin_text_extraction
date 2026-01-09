@@ -1,0 +1,343 @@
+/* 基础样式 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* 头部样式 */
+.header {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 12px;
+    padding: 20px 30px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header h1 {
+    font-size: 24px;
+    color: #333;
+    font-weight: 600;
+}
+
+.nav {
+    display: flex;
+    gap: 20px;
+}
+
+.nav a {
+    color: #667eea;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    transition: background 0.3s;
+}
+
+.nav a:hover {
+    background: #f0f0f0;
+}
+
+/* 主内容区域 */
+.main {
+    min-height: calc(100vh - 200px);
+}
+
+.content-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* 卡片样式 */
+.card {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.card h2 {
+    font-size: 20px;
+    margin-bottom: 15px;
+    color: #333;
+    font-weight: 600;
+}
+
+.subtitle {
+    color: #666;
+    margin-bottom: 25px;
+    font-size: 14px;
+}
+
+/* 表单样式 */
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.form-group label {
+    font-weight: 500;
+    color: #333;
+    font-size: 14px;
+}
+
+.required {
+    color: #e74c3c;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+    padding: 12px;
+    border: 2px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color 0.3s;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.form-hint {
+    color: #999;
+    font-size: 12px;
+}
+
+.form-hint a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+.form-hint a:hover {
+    text-decoration: underline;
+}
+
+.form-actions {
+    display: flex;
+    gap: 15px;
+    margin-top: 10px;
+}
+
+/* 按钮样式 */
+.btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-secondary {
+    background: #f0f0f0;
+    color: #333;
+}
+
+.btn-secondary:hover {
+    background: #e0e0e0;
+}
+
+/* 元数据显示 */
+.metadata {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.metadata-item {
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 3px solid #667eea;
+}
+
+.metadata-item strong {
+    color: #667eea;
+    margin-right: 8px;
+}
+
+.metadata-item a {
+    color: #667eea;
+    text-decoration: none;
+    word-break: break-all;
+}
+
+.metadata-item a:hover {
+    text-decoration: underline;
+}
+
+/* 文本内容区域 */
+.text-content {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 6px;
+    line-height: 1.8;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.text-content p {
+    margin-bottom: 12px;
+    color: #333;
+}
+
+.text-content br {
+    margin-bottom: 12px;
+}
+
+.text-muted {
+    color: #999;
+    font-style: italic;
+}
+
+/* 结果显示区域 */
+.result-area {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* 错误提示 */
+.error-area {
+    margin-top: 20px;
+}
+
+.card-error {
+    background: #fee;
+    border-left: 4px solid #e74c3c;
+}
+
+.card-error h2 {
+    color: #e74c3c;
+}
+
+.card-error p {
+    color: #c0392b;
+    margin-top: 10px;
+}
+
+/* 消息提示 */
+.message {
+    padding: 12px 20px;
+    border-radius: 6px;
+    margin-top: 15px;
+    font-size: 14px;
+}
+
+.message-success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.message-error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* 页脚 */
+.footer {
+    text-align: center;
+    padding: 20px;
+    color: rgba(255, 255, 255, 0.8);
+    margin-top: 40px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .header {
+        flex-direction: column;
+        gap: 15px;
+    }
+    
+    .nav {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .card {
+        padding: 20px;
+    }
+    
+    .form-actions {
+        flex-direction: column;
+    }
+    
+    .btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* 滚动条样式 */
+.text-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.text-content::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.text-content::-webkit-scrollbar-thumb {
+    background: #667eea;
+    border-radius: 4px;
+}
+
+.text-content::-webkit-scrollbar-thumb:hover {
+    background: #764ba2;
+}
