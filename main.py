@@ -14,8 +14,9 @@ from src.parser import DouyinLinkParser
 from src.fetcher import DouyinFetcher
 from src.audio_processor import AudioProcessor
 from src.asr_client import ASRClient
+from src.local_asr_client import LocalASRClient
 from src.formatter import OutputFormatter
-from config import settings
+from config import settings, ASR_PROVIDER_DASHSCOPE, ASR_PROVIDER_LOCAL
 
 app = typer.Typer(help="抖音视频文本提取工具")
 # 在 Windows 上禁用 legacy 模式以支持 Unicode
@@ -38,15 +39,29 @@ def extract(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径（不含扩展名）"),
     format_type: str = typer.Option("md", "--format", "-f", help="输出格式: md/txt/json"),
     no_save: bool = typer.Option(False, "--no-save", help="不保存到文件，仅在终端显示"),
+    asr_provider: Optional[str] = typer.Option(None, "--asr-provider", help=f"ASR 提供商: {ASR_PROVIDER_DASHSCOPE}（云端）或 {ASR_PROVIDER_LOCAL}（本地），默认使用配置文件的设置"),
 ):
     """提取抖音视频的文本内容"""
     
     show_welcome()
     
+    # 0. 处理命令行参数覆盖配置
+    if asr_provider:
+        if asr_provider not in [ASR_PROVIDER_DASHSCOPE, ASR_PROVIDER_LOCAL]:
+            console.print(f"[red]❌ 无效的 ASR 提供商: {asr_provider}[/red]")
+            console.print(f"[yellow]   支持的值: {ASR_PROVIDER_DASHSCOPE}, {ASR_PROVIDER_LOCAL}[/yellow]")
+            raise typer.Exit(code=1)
+        settings.asr_provider = asr_provider
+        console.print(f"[dim]>> 使用命令行参数覆盖: ASR 提供商 = {asr_provider}[/dim]")
+    
     # 1. 检查配置
     if not settings.validate_config():
-        console.print("[red]❌ 配置错误: 未设置 DASHSCOPE_API_KEY[/red]")
-        console.print("[yellow]请设置环境变量或创建 .env 文件，参考 .env.example[/yellow]")
+        if settings.asr_provider == ASR_PROVIDER_DASHSCOPE:
+            console.print("[red]❌ 配置错误: 未设置 DASHSCOPE_API_KEY[/red]")
+            console.print("[yellow]请设置环境变量或创建 .env 文件，参考 .env.example[/yellow]")
+        else:
+            console.print("[red]❌ 配置错误: 本地 ASR 需要安装 Whisper[/red]")
+            console.print("[yellow]请运行: uv add openai-whisper[/yellow]")
         raise typer.Exit(code=1)
     
     # 2. 解析链接
@@ -69,12 +84,40 @@ def extract(
         console.print(f"[yellow]可通过环境变量 MAX_VIDEO_DURATION 调整限制[/yellow]")
         raise typer.Exit(code=1)
     
-    # 4. 语音识别（直接使用视频 URL，无需提取音频）
+    # 4. 语音识别（根据配置选择 DashScope 或本地）
     try:
-        asr_client = ASRClient(settings.dashscope_api_key, settings.asr_model)
-        
-        # 使用视频 URL 直接进行转写（更快、更省空间）
-        text = asr_client.transcribe(video_url=metadata.video_url)
+        if settings.asr_provider == ASR_PROVIDER_DASHSCOPE:
+            # 使用 DashScope 云端转写（带兜底方案）
+            console.print("[cyan]📡 使用 DashScope 云端转写[/cyan]")
+            asr_client = ASRClient(settings.dashscope_api_key, settings.asr_model)
+            # 使用兜底方案：主方案失败时自动切换到 OSS + FFmpeg
+            text = asr_client.transcribe_with_fallback(
+                video_url=metadata.video_url,
+                video_id=video_id,
+                settings=settings
+            )
+        elif settings.asr_provider == ASR_PROVIDER_LOCAL:
+            # 使用本地 Whisper 转写
+            console.print("[cyan]💻 使用本地 Whisper 转写[/cyan]")
+            # 本地 ASR 需要音频文件，先提取音频
+            processor = AudioProcessor()
+            audio_path = processor.extract_audio(metadata.video_url)
+            if not audio_path:
+                console.print("[red]❌ 音频提取失败[/red]")
+                raise typer.Exit(code=1)
+            
+            try:
+                local_asr_client = LocalASRClient(model="base")
+                text = local_asr_client.transcribe(audio_path=audio_path)
+            finally:
+                # 清理临时音频文件
+                if audio_path.exists():
+                    audio_path.unlink()
+                    console.print("[dim]>> 已清理临时音频文件[/dim]")
+        else:
+            console.print(f"[red]❌ 不支持的 ASR 提供商: {settings.asr_provider}[/red]")
+            console.print(f"[yellow]   支持的值: {ASR_PROVIDER_DASHSCOPE}, {ASR_PROVIDER_LOCAL}[/yellow]")
+            raise typer.Exit(code=1)
         
         if not text:
             console.print("[red]❌ 语音识别失败[/red]")
@@ -138,24 +181,68 @@ def config_check():
     """检查配置是否正确"""
     console.print("[cyan]>> 检查配置...[/cyan]\n")
     
-    # 检查 API Key
+    # 检查必需配置
+    console.print("[bold]必需配置:[/bold]")
     if settings.validate_config():
         console.print("[green]✅ DASHSCOPE_API_KEY: 已配置[/green]")
     else:
-        console.print("[red]❌ DASHSCOPE_API_KEY: 未配置或无效[/red]")
+        console.print("[red]❌ DASHSCOPE_API_KEY: 未配置或为空[/red]")
+        console.print("[yellow]   请在 .env 文件中设置 DASHSCOPE_API_KEY[/yellow]")
     
     # 检查 FFmpeg
+    console.print("\n[bold]依赖检查:[/bold]")
     processor = AudioProcessor()
     if processor.check_ffmpeg():
         console.print("[green]✅ FFmpeg: 已安装[/green]")
     else:
-        console.print("[red]❌ FFmpeg: 未安装[/red]")
+        console.print("[yellow]⚠️ FFmpeg: 未安装（不影响主功能，但兜底方案需要）[/yellow]")
     
-    # 显示其他配置
-    console.print(f"\n[cyan]其他配置:[/cyan]")
+    # 显示 ASR 配置
+    console.print(f"\n[bold]ASR 配置:[/bold]")
+    provider_name = "DashScope（云端）" if settings.asr_provider == ASR_PROVIDER_DASHSCOPE else "Whisper（本地）"
+    console.print(f"  提供商: {provider_name} ({settings.asr_provider})")
+    if settings.asr_provider == ASR_PROVIDER_DASHSCOPE:
+        console.print(f"  模型: {settings.asr_model}")
+    else:
+        console.print(f"  模型: Whisper base（本地）")
     console.print(f"  最大视频时长: {settings.max_video_duration}秒")
-    console.print(f"  ASR 模型: {settings.asr_model}")
+    
+    # 显示输出配置
+    console.print(f"\n[bold]输出配置:[/bold]")
     console.print(f"  输出目录: {settings.output_dir}")
+    console.print(f"  请求超时: {settings.request_timeout}秒")
+    console.print(f"  重试次数: {settings.retry_times}")
+    
+    # 检查 OSS 配置（如果启用）
+    console.print(f"\n[bold]OSS 兜底方案:[/bold]")
+    if settings.oss_enable_fallback:
+        if settings.validate_oss_config():
+            console.print("[green]  ✅ 已启用且配置完整[/green]")
+            console.print(f"  Bucket: {settings.oss_bucket_name}")
+            console.print(f"  Endpoint: {settings.oss_endpoint}")
+            # 测试 OSS 连接
+            try:
+                from src.oss_client import OSSClient
+                oss_client = OSSClient(
+                    access_key_id=settings.oss_access_key_id,
+                    access_key_secret=settings.oss_access_key_secret,
+                    bucket_name=settings.oss_bucket_name,
+                    endpoint=settings.oss_endpoint
+                )
+                if oss_client.test_connection():
+                    console.print(f"[green]  ✅ OSS 连接正常[/green]")
+                else:
+                    console.print(f"[yellow]  ⚠ OSS 连接失败[/yellow]")
+            except Exception as e:
+                console.print(f"[yellow]  ⚠ OSS 连接测试异常: {str(e)[:50]}[/yellow]")
+        else:
+            console.print("[yellow]  ⚠ 已启用但配置不完整[/yellow]")
+            console.print("[yellow]  请检查 OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_BUCKET_NAME, OSS_ENDPOINT[/yellow]")
+    else:
+        console.print("[dim]  未启用（OSS_ENABLE_FALLBACK=false）[/dim]")
+        console.print("[dim]  启用后可在主方案失败时自动切换到 OSS + FFmpeg 兜底[/dim]")
+    
+    console.print()  # 空行
 
 
 @app.command()

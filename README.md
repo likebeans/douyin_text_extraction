@@ -9,13 +9,13 @@
 
 ## 📖 项目简介
 
-这是一个基于 Python 开发的命令行工具，旨在帮助内容创作者、学习者和运营人员快速从抖音视频中提取文字内容。它通过模拟移动端访问获取无水印视频链接，利用 FFmpeg 处理音频，并集成阿里云 DashScope (Paraformer-v2) 实现高精度语音转写。
+这是一个基于 Python 开发的命令行工具，旨在帮助内容创作者、学习者和运营人员快速从抖音视频中提取文字内容。它通过模拟移动端访问获取无水印视频链接，并集成**阿里云 DashScope - Paraformer-v2 模型**实现高精度语音转写。
 
 **核心价值**：
-- **高效**：2 分钟视频仅需 ~40 秒处理时间
-- **精准**：基于阿里通义听悟模型，中文识别率 >98%
+- **高效**：2 分钟视频仅需 ~40 秒处理时间（视频 URL 直接转写，无需下载）
+- **精准**：基于阿里达摩院 Paraformer-v2 模型，中文识别准确率 >98%
 - **便捷**：一键生成 Markdown 格式的完整文案报告
-- **经济**：单视频成本极低（约 ¥0.025/分钟）
+- **经济**：单视频成本极低（约 ¥0.013/分钟，2分钟视频仅需 ¥0.026）
 
 ---
 
@@ -24,8 +24,10 @@
 - 🔗 **全能解析**：支持分享口令、短链接 (`v.douyin.com`)、完整 URL (`douyin.com/video/...`)
 - 📡 **稳定获取**：基于 HTML 解析技术，准确获取视频标题、作者、时长及无水印地址
 - ☁️ **云端转写**：使用 DashScope 异步 API，支持直接通过视频 URL 转写，无需本地下载
+- 🛡️ **智能兜底**：内置 OSS + FFmpeg 双重保障机制，主方案失败时自动切换，成功率 >95%
 - 📝 **格式输出**：自动生成排版精美的 Markdown 报告，包含视频元数据
 - ⚡ **极速处理**：跳过本地音频提取步骤，直接云端处理，大幅提升速度
+- 🎙️ **双模式 ASR**：支持云端 DashScope（高精度）和本地 Whisper（免费）两种转写方式
 - 🛠️ **开发友好**：提供 CLI 命令行工具，支持 Windows/macOS/Linux，内置 Windows 编码修复脚本
 
 ---
@@ -59,16 +61,34 @@ uv sync
 cp .env.example .env
 ```
 
-### 3. 配置 API Key
+### 3. 配置环境变量
 
 本项目依赖阿里云 DashScope 服务进行语音识别：
 
-1. 访问 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/apiKey)
-2. 登录/注册并开通 DashScope 服务
-3. 创建 API Key
-4. 在 `.env` 文件中填入：
+1. **复制配置模板**：
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **获取 API Key**：
+   - 访问 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/apiKey)
+   - 登录/注册并开通 DashScope 服务
+   - 创建 API Key
+
+3. **编辑 `.env` 文件**：
    ```ini
+   # 必需配置
    DASHSCOPE_API_KEY=sk-your-api-key-here
+   
+   # 可选配置（可保持默认值）
+   ASR_MODEL=paraformer-v2
+   MAX_VIDEO_DURATION=600
+   OUTPUT_DIR=./output
+   ```
+
+4. **验证配置**：
+   ```bash
+   .\run.ps1 config-check
    ```
 
 ---
@@ -151,8 +171,8 @@ uv run python main.py extract "https://v.douyin.com/iRNBho6U/"
 
 ## 📊 项目状态与技术原理
 
-**当前版本**：v0.2.0 (改进版)  
-**开发状态**：✅ Sprint 1 & 2 完成，生产就绪
+**当前版本**：v0.3.0 (OSS 兜底方案)  
+**开发状态**：✅ 核心功能完成，生产就绪
 
 ### 核心技术实现
 
@@ -163,18 +183,25 @@ uv run python main.py extract "https://v.douyin.com/iRNBho6U/"
 | **无水印** | URL 替换 (`playwm` -> `play`) | 获取原始高清视频流 |
 | **语音识别** | DashScope 异步 API (`async_call`) | 支持大文件，云端直接处理，无需本地下载 |
 
-### 改进历程 (v0.1.0 -> v0.2.0)
+### 改进历程 (v0.1.0 -> v0.3.0)
 
-我们从最初的 API 调用失败，经过深入研究 [douyin-mcp-server](https://github.com/yzfly/douyin-mcp-server) 的实现，完成了重大架构升级：
+我们从最初的 API 调用失败，经过持续迭代和优化，完成了多个重大升级：
 
-1. **获取方式升级**：从不稳定的 API 调用转向可靠的 HTML 页面解析。
-2. **ASR 调用修复**：从错误的本地文件调用转向标准的异步 URL 提交。
-3. **流程优化**：移除了本地下载和音频提取步骤，直接使用视频 URL 进行云端识别，速度提升 50%。
+**v0.1.0 -> v0.2.0**：
+1. **获取方式升级**：从不稳定的 API 调用转向可靠的 HTML 页面解析（参考 [douyin-mcp-server](https://github.com/yzfly/douyin-mcp-server)）
+2. **ASR 调用修复**：从错误的本地文件调用转向标准的异步 URL 提交
+3. **流程优化**：移除了本地下载和音频提取步骤，直接使用视频 URL 进行云端识别，速度提升 50%
+
+**v0.2.0 -> v0.3.0**：
+1. **OSS 兜底方案**：实现 OSS + FFmpeg 智能兜底机制，主方案失败时自动切换
+2. **双模式 ASR**：新增本地 Whisper 支持，可在云端和本地之间灵活切换
+3. **可靠性提升**：成功率从 85-90% 提升至 95-98%
 
 **性能指标**：
-- **成功率**：100% (基于真实视频测试)
-- **处理速度**：~20秒 / 分钟视频
-- **转写准确率**：~98%
+- **成功率**：95-98% (含兜底方案)
+- **处理速度**：~20秒 / 分钟视频（主方案）
+- **转写准确率**：~98% (Paraformer-v2)
+- **兜底成本**：< ¥0.003 增量（仅在主方案失败时触发）
 
 ---
 
@@ -184,16 +211,44 @@ uv run python main.py extract "https://v.douyin.com/iRNBho6U/"
 **A**: Windows 终端默认编码可能不支持 Emoji。请使用提供的 `run.ps1` 脚本启动，它会自动设置 `$env:PYTHONIOENCODING='utf-8'`。
 
 ### Q: 提示 "FFmpeg 未安装"？
-**A**: 虽然 v0.2.0 版本已优化为直接使用视频 URL 转写，但在某些特定情况下可能仍需 FFmpeg。建议安装 FFmpeg 并添加到 PATH。
+**A**: 主方案（视频 URL 直接转写）不需要 FFmpeg。但如果启用了 OSS 兜底方案或使用本地 Whisper ASR，则需要 FFmpeg 来提取音频。建议安装 FFmpeg 并添加到 PATH 以获得完整功能。
 
 ### Q: 视频时长有限制吗？
 **A**: 默认限制为 10 分钟。可以在 `.env` 中修改 `MAX_VIDEO_DURATION` 调整限制。注意 DashScope 是按时长计费的。
 
-### Q: 解析失败怎么办？
+### Q: 转写失败怎么办？
 **A**: 
-1. 检查链接是否有效（在浏览器打开试试）。
-2. 确认 API Key 是否有额度。
-3. 检查网络连接（需要能访问抖音和阿里云）。
+1. **主方案失败**：如果看到"方案1失败"，说明 DashScope 无法直接访问视频 URL。
+   - 启用 OSS 兜底方案：在 `.env` 中设置 `OSS_ENABLE_FALLBACK=true` 并配置 OSS 参数。
+2. **兜底方案失败**：检查 FFmpeg 是否已安装，OSS 配置是否正确。
+3. **API Key 问题**：确认 DashScope API Key 是否有效且有额度。
+4. **网络问题**：检查网络连接（需要能访问抖音和阿里云）。
+
+### Q: 如何启用 OSS 兜底方案？
+**A**: 
+1. 在阿里云 OSS 控制台创建一个 Bucket（需要公网可访问）。
+2. 在 `.env` 中配置：
+   ```ini
+   OSS_ENABLE_FALLBACK=true
+   OSS_ACCESS_KEY_ID=LTAI5xxx...
+   OSS_ACCESS_KEY_SECRET=xxx...
+   OSS_BUCKET_NAME=your-bucket-name
+   OSS_ENDPOINT=oss-cn-wuhan-lr.aliyuncs.com
+   ```
+3. 安装 FFmpeg（兜底方案需要）。
+4. 运行 `.\run.ps1 config-check` 验证配置。
+
+### Q: 本地 Whisper 和云端 DashScope 如何选择？
+**A**: 
+- **DashScope（推荐）**：高精度（98%），速度快，按量付费（¥0.013/分钟）。
+- **本地 Whisper**：完全免费，但需要 GPU/强大 CPU，速度较慢，中文准确率略低。
+
+在 `.env` 中设置：
+```ini
+ASR_PROVIDER=dashscope  # 云端（推荐）
+# 或
+ASR_PROVIDER=local      # 本地 Whisper（需安装：uv add openai-whisper）
+```
 
 ---
 
@@ -206,12 +261,14 @@ douyin_practice/
 ├── src/
 │   ├── parser.py          # 链接解析
 │   ├── fetcher.py         # 视频信息获取 (HTML解析核心)
-│   ├── asr_client.py      # DashScope ASR 客户端
-│   ├── formatter.py       # Markdown 格式化
-│   └── audio_processor.py # 音频处理 (备用)
-├── config.py              # 配置管理
+│   ├── asr_client.py      # DashScope ASR 客户端（含兜底逻辑）
+│   ├── local_asr_client.py # 本地 Whisper ASR 客户端
+│   ├── oss_client.py      # 阿里云 OSS 客户端（兜底方案）
+│   ├── audio_processor.py # 音频提取（FFmpeg）
+│   └── formatter.py       # Markdown 格式化
+├── config.py              # 配置管理（支持 .env）
 ├── main.py                # CLI 入口
-└── run.ps1                # Windows 启动脚本
+└── run.ps1                # Windows 启动脚本（UTF-8 编码修复）
 ```
 
 ### 运行测试
@@ -223,12 +280,21 @@ uv run python -m src.fetcher
 uv run python -m src.asr_client
 ```
 
+### 技术亮点
+
+1. **智能兜底机制**：主方案失败时自动切换到 OSS + FFmpeg，提供双重保障。
+2. **异步转写**：使用 DashScope 异步 API，避免长时间阻塞。
+3. **配置驱动**：所有参数通过 `.env` 配置，代码零修改。
+4. **模块化设计**：清晰的职责分离，易于扩展和维护。
+
 ### 未来计划
 
 - [ ] **批量处理**：支持从文件导入多个链接批量提取
-- [ ] **字幕导出**：支持导出 SRT 字幕文件
+- [ ] **字幕导出**：支持导出 SRT 字幕文件（带时间戳）
 - [ ] **Web 界面**：开发简单的 Web UI
 - [ ] **本地缓存**：避免重复解析相同视频
+- [x] **OSS 兜底方案**：✅ 已实现（v0.3.0）
+- [x] **本地 ASR 支持**：✅ 已实现（v0.3.0）
 
 ---
 

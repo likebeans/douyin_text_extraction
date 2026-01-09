@@ -1,4 +1,4 @@
-"""ASR (语音识别) 客户端模块 - 使用阿里云 DashScope 异步 API"""
+"""ASR (语音识别) 客户端模块 - 使用阿里云 DashScope Paraformer 模型"""
 from pathlib import Path
 from typing import Optional
 from rich.console import Console
@@ -9,13 +9,19 @@ console = Console()
 
 
 class ASRClient:
-    """阿里云 DashScope ASR 客户端 - 使用异步转写 API
+    """阿里云 DashScope ASR 客户端 - 使用 Paraformer 模型
     
-    参考 douyin-mcp-server 的实现：
-    1. 使用 Transcription.async_call() 提交任务
-    2. 使用 Transcription.wait() 等待完成
-    3. 从 transcription_url 下载结果
-    4. 支持直接使用视频 URL（无需本地文件）
+    模型：Paraformer-v2（阿里达摩院语音识别模型）
+    - 支持语言：中文（普通话）、英文
+    - 支持格式：视频/音频文件均可
+    - 自动提取：支持直接传视频 URL，自动提取音频
+    - 价格：0.00022元/秒（约 ¥0.0132/分钟）
+    
+    API 调用流程：
+    1. 使用 Transcription.async_call() 提交异步任务
+    2. 使用 Transcription.wait() 等待任务完成
+    3. 从 transcription_url 下载 JSON 结果
+    4. 解析 transcripts[0].text 获取转写文本
     """
     
     def __init__(self, api_key: str, model: str = "paraformer-v2"):
@@ -155,6 +161,142 @@ class ASRClient:
             import traceback
             console.print(f"[dim]{traceback.format_exc()}[/dim]")
             return None
+    
+    def transcribe_with_fallback(
+        self,
+        video_url: str,
+        video_id: str,
+        settings  # Settings 对象
+    ) -> Optional[str]:
+        """带兜底方案的转写
+        
+        执行流程：
+        1. 方案1：尝试直接使用视频 URL 转写（主方案）
+        2. 方案2：如果失败，启用 OSS + FFmpeg 兜底方案（备用）
+           - 下载视频到本地
+           - FFmpeg 提取音频
+           - 上传音频到 OSS
+           - 使用 OSS URL 转写
+           - 清理临时文件
+        
+        Args:
+            video_url: 视频 URL
+            video_id: 视频 ID（用于文件命名）
+            settings: 配置对象（包含 OSS 配置）
+            
+        Returns:
+            转写文本，失败返回 None
+        """
+        # ========== 方案1: 尝试直接 URL 转写 ==========
+        console.print("[cyan]🎯 方案1：直接视频 URL 转写[/cyan]")
+        text = self.transcribe(video_url=video_url)
+        
+        if text:
+            console.print("[green]✅ 方案1 成功[/green]")
+            return text
+        
+        # ========== 方案2: 兜底方案（OSS + FFmpeg）==========
+        if not settings.oss_enable_fallback:
+            console.print("[yellow]⚠ 兜底方案未启用（OSS_ENABLE_FALLBACK=false）[/yellow]")
+            console.print("[yellow]   如需启用，请配置 OSS 并设置 OSS_ENABLE_FALLBACK=true[/yellow]")
+            return None
+        
+        # 验证 OSS 配置
+        if not settings.validate_oss_config():
+            console.print("[red]❌ OSS 配置不完整，无法启用兜底方案[/red]")
+            console.print("[yellow]   请检查 .env 文件中的 OSS_* 配置项[/yellow]")
+            return None
+        
+        console.print("[yellow]⚠ 方案1 失败，启动兜底方案...[/yellow]")
+        console.print("[cyan]🎯 方案2：OSS + FFmpeg 兜底[/cyan]")
+        
+        # 导入必要的模块
+        from src.audio_processor import AudioProcessor
+        from src.oss_client import OSSClient
+        
+        temp_video = None
+        temp_audio = None
+        oss_path = None
+        oss_client = None
+        
+        try:
+            # 1. 下载视频
+            console.print("[cyan]步骤 1/5：下载视频[/cyan]")
+            settings.temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_video = settings.temp_dir / f"{video_id}.mp4"
+            
+            processor = AudioProcessor(temp_dir=settings.temp_dir, cleanup=settings.cleanup_temp_files)
+            if not processor.download_video(video_url, temp_video):
+                console.print("[red]❌ 兜底方案失败：视频下载失败[/red]")
+                return None
+            
+            # 2. 提取音频
+            console.print("[cyan]步骤 2/5：提取音频[/cyan]")
+            temp_audio = settings.temp_dir / f"{video_id}.wav"
+            audio_path = processor.extract_audio(temp_video, output_path=temp_audio)
+            if not audio_path:
+                console.print("[red]❌ 兜底方案失败：音频提取失败[/red]")
+                return None
+            
+            # 3. 上传到 OSS
+            console.print("[cyan]步骤 3/5：上传到 OSS[/cyan]")
+            oss_client = OSSClient(
+                access_key_id=settings.oss_access_key_id,
+                access_key_secret=settings.oss_access_key_secret,
+                bucket_name=settings.oss_bucket_name,
+                endpoint=settings.oss_endpoint
+            )
+            
+            upload_result = oss_client.upload_audio(audio_path)
+            if not upload_result:
+                console.print("[red]❌ 兜底方案失败：OSS 上传失败[/red]")
+                return None
+            
+            oss_url, oss_path = upload_result
+            
+            # 4. 使用 OSS URL 转写
+            console.print("[cyan]步骤 4/5：使用 OSS URL 转写[/cyan]")
+            text = self.transcribe(video_url=oss_url)
+            
+            if text:
+                console.print("[green]✅ 方案2 成功[/green]")
+            else:
+                console.print("[red]❌ 兜底方案失败：转写失败[/red]")
+            
+            return text
+            
+        except Exception as e:
+            console.print(f"[red]❌ 兜底方案异常: {e}[/red]")
+            import traceback
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+            return None
+            
+        finally:
+            # 5. 清理临时文件和 OSS 文件
+            console.print("[cyan]步骤 5/5：清理临时文件[/cyan]")
+            
+            if settings.cleanup_temp_files:
+                # 删除本地临时文件
+                if temp_video and temp_video.exists():
+                    try:
+                        temp_video.unlink()
+                        console.print("[dim]>> 已删除临时视频文件[/dim]")
+                    except Exception as e:
+                        console.print(f"[yellow]⚠ 删除临时视频失败: {e}[/yellow]")
+                
+                if temp_audio and temp_audio.exists():
+                    try:
+                        temp_audio.unlink()
+                        console.print("[dim]>> 已删除临时音频文件[/dim]")
+                    except Exception as e:
+                        console.print(f"[yellow]⚠ 删除临时音频失败: {e}[/yellow]")
+            
+            # 删除 OSS 文件
+            if oss_path and oss_client:
+                try:
+                    oss_client.delete_file(oss_path)
+                except Exception as e:
+                    console.print(f"[yellow]⚠ 删除 OSS 文件失败: {e}[/yellow]")
     
     def transcribe_with_timestamp(self, audio_path: Path) -> Optional[list]:
         """带时间戳的转写（进阶功能）

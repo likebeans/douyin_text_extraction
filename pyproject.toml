@@ -1,7 +1,7 @@
 [project]
 name = "douyin-text-extractor"
-version = "0.1.0"
-description = "抖音视频文本提取工具 - 快速将抖音视频转为文字"
+version = "0.3.0"
+description = "抖音视频文本提取工具 - 快速将抖音视频转为文字，支持云端/本地双模式 ASR，内置 OSS 兜底方案"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,6 +15,8 @@ dependencies = [
     "tqdm>=4.66.0",
     "flask>=3.0.0",
     "python-dotenv>=1.0.0",
+    "oss2>=2.18.0",
+    "openai-whisper>=20250625",
 ]
 
 [project.scripts]

@@ -8,7 +8,19 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment variables (contains sensitive data)
 .env
+.env.local
+.env.*.local
 
 # Output files
 output/
+
+# Temporary files
+temp/
+*.tmp
+
+# Backup files
+*.bak
+*.backup
