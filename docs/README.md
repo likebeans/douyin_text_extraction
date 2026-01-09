@@ -4,6 +4,14 @@
 
 ## 📚 文档列表
 
+### 技术博客
+
+- [Git Worktree 与并行开发实战](./git-worktree-parallel-development.md) - 深入讲解 Git Worktree 与分支协作实现并行开发
+  - 主题：Git Worktree 实战指南
+  - 案例：Web 界面开发的完整流程
+  - 日期：2026-01-09
+  - 状态：✅ 已完成
+
 ### 问题修复记录
 
 - [链接解析器修复记录](./link-parser-fix.md) - 抖音短链接解析失败问题的修复记录
@@ -37,13 +45,16 @@
 
 ## 🔍 快速查找
 
-### 按问题类型查找
+### 按主题类型查找
 
-- **链接解析问题** → [link-parser-fix.md](./link-parser-fix.md)
+- **Git 工作流** → [Git Worktree 与并行开发实战](./git-worktree-parallel-development.md)
+- **链接解析问题** → [链接解析器修复记录](./link-parser-fix.md)
 
 ### 按日期查找
 
-- **2026-01-09** → [link-parser-fix.md](./link-parser-fix.md)
+- **2026-01-09** → 
+  - [Git Worktree 与并行开发实战](./git-worktree-parallel-development.md)
+  - [链接解析器修复记录](./link-parser-fix.md)
 
 ---
 
