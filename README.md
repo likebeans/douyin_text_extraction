@@ -252,6 +252,37 @@ ASR_PROVIDER=local      # 本地 Whisper（需安装：uv add openai-whisper）
 
 ---
 
+## 🌐 Web 界面
+
+项目还提供了 Web 界面版本，提供更友好的图形界面：
+
+### 快速开始
+
+```bash
+# 启动 Web 应用
+uv run python web_app.py
+
+# 访问界面
+# 本地：http://localhost:5000
+# 局域网：http://<你的IP>:5000
+```
+
+### 功能特点
+
+- ✅ **简单易用**：直观的 Web 界面，无需命令行知识
+- ✅ **实时配置**：支持通过 Web 界面配置和修改参数
+- ✅ **重点展示文本**：结果页面重点展示提取的文本内容
+- ✅ **完整元数据**：同时显示视频的基本信息
+- ✅ **响应式设计**：支持桌面和移动设备
+
+### 详细文档
+
+- [Web 界面使用指南](docs/README.md#web-界面)
+- [外网访问配置](docs/web-external-access.md)
+- [网络问题排查](docs/network-troubleshooting.md)
+
+---
+
 ## 🔧 开发指南
 
 ### 项目结构
@@ -266,14 +297,25 @@ douyin_practice/
 │   ├── oss_client.py      # 阿里云 OSS 客户端（兜底方案）
 │   ├── audio_processor.py # 音频提取（FFmpeg）
 │   └── formatter.py       # Markdown 格式化
+├── tests/                 # 测试文件
+│   └── test_oss_client.py # OSS 客户端测试
+├── docs/                  # 项目文档
+│   ├── README.md          # 文档索引
+│   ├── ENV_CONFIG_GUIDE.md # 环境变量配置指南
+│   ├── ASR_PROVIDER_GUIDE.md # ASR 提供商选择指南
+│   └── ...                # 其他技术文档
 ├── config.py              # 配置管理（支持 .env）
 ├── main.py                # CLI 入口
+├── web_app.py             # Web 界面入口
 └── run.ps1                # Windows 启动脚本（UTF-8 编码修复）
 ```
 
 ### 运行测试
 
 ```bash
+# 运行 OSS 客户端测试
+uv run pytest tests/test_oss_client.py -v
+
 # 测试各个模块
 uv run python -m src.parser
 uv run python -m src.fetcher
@@ -286,15 +328,29 @@ uv run python -m src.asr_client
 2. **异步转写**：使用 DashScope 异步 API，避免长时间阻塞。
 3. **配置驱动**：所有参数通过 `.env` 配置，代码零修改。
 4. **模块化设计**：清晰的职责分离，易于扩展和维护。
+5. **完整测试**：包含 OSS 客户端完整测试套件。
 
 ### 未来计划
 
 - [ ] **批量处理**：支持从文件导入多个链接批量提取
 - [ ] **字幕导出**：支持导出 SRT 字幕文件（带时间戳）
-- [ ] **Web 界面**：开发简单的 Web UI
 - [ ] **本地缓存**：避免重复解析相同视频
 - [x] **OSS 兜底方案**：✅ 已实现（v0.3.0）
 - [x] **本地 ASR 支持**：✅ 已实现（v0.3.0）
+- [x] **Web 界面**：✅ 已实现
+
+---
+
+## 📚 文档索引
+
+项目完整文档请参考 [docs/README.md](docs/README.md)，包括：
+
+- [环境变量配置指南](docs/ENV_CONFIG_GUIDE.md) - 完整的 `.env` 配置说明
+- [ASR 提供商选择指南](docs/ASR_PROVIDER_GUIDE.md) - DashScope vs 本地 Whisper
+- [技术说明澄清](docs/TECH_CLARIFICATION.md) - 重要技术细节说明
+- [OSS + FFmpeg 兜底方案](docs/oss-ffmpeg-fallback-solution.md) - 兜底方案设计文档
+- [问题修复记录](docs/link-parser-fix.md) - 链接解析器修复记录
+- [Web 界面文档](docs/README.md#web-界面) - Web 界面使用指南
 
 ---
 
@@ -305,4 +361,5 @@ MIT License
 ---
 
 **维护者**: Developer  
-**最后更新**: 2026-01-09
+**最后更新**: 2026-01-09  
+**版本**: v0.3.0

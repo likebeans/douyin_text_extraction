@@ -12,7 +12,8 @@ class DouyinLinkParser:
     """抖音链接解析器"""
     
     # 正则表达式模式
-    SHARE_TEXT_PATTERN = r'(https?://v\.douyin\.com/[A-Za-z0-9_]+)'
+    # 更新：支持连字符 - 在短链接中（如 9cZD_5-RWyI）
+    SHARE_TEXT_PATTERN = r'(https?://v\.douyin\.com/[A-Za-z0-9_-]+)'
     VIDEO_ID_PATTERN = r'/video/(\d+)'
     MODAL_ID_PATTERN = r'/modal/detail/(\d+)'
     # 支持更多 URL 格式
@@ -21,8 +22,15 @@ class DouyinLinkParser:
     def __init__(self, timeout: int = 10):
         self.timeout = timeout
         self.session = requests.Session()
+        # 使用更完整的请求头模拟真实浏览器
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1'
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+            'Referer': 'https://www.douyin.com/',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0'
         })
     
     def extract_short_url(self, text: str) -> Optional[str]:
@@ -54,13 +62,52 @@ class DouyinLinkParser:
             (重定向后的完整 URL, HTML 内容) 的元组
         """
         try:
+            # 先禁用自动重定向，手动获取重定向地址
             response = self.session.get(
                 short_url,
-                allow_redirects=True,
+                allow_redirects=False,
                 timeout=self.timeout
             )
+            
+            # 如果是 3xx 重定向
+            if response.status_code in (301, 302, 303, 307, 308):
+                redirect_url = response.headers.get('Location')
+                if redirect_url:
+                    # 处理相对路径
+                    if not redirect_url.startswith('http'):
+                        from urllib.parse import urljoin
+                        redirect_url = urljoin(short_url, redirect_url)
+                    
+                    console.print(f"[dim]   重定向到: {redirect_url[:100]}...[/dim]")
+                    
+                    # 检查是否重定向到根域名（说明被反爬了）
+                    if redirect_url.strip('/') in ('https://www.douyin.com', 'http://www.douyin.com'):
+                        console.print(f"[yellow]⚠️  短链接被重定向到根域名，可能是链接失效或被反爬[/yellow]")
+                        console.print(f"[yellow]   尝试直接访问短链接...[/yellow]")
+                        # 尝试允许自动重定向，获取最终页面
+                        response = self.session.get(short_url, allow_redirects=True, timeout=self.timeout)
+                        response.raise_for_status()
+                        
+                        # 再次检查最终 URL
+                        if response.url.strip('/') in ('https://www.douyin.com', 'http://www.douyin.com'):
+                            console.print(f"[red]❌ 短链接已失效或不可用[/red]")
+                            return None, None
+                        
+                        return response.url, response.text
+                    
+                    # 访问重定向后的 URL
+                    response = self.session.get(
+                        redirect_url,
+                        allow_redirects=True,
+                        timeout=self.timeout
+                    )
+                    response.raise_for_status()
+                    return response.url, response.text
+            
+            # 如果不是重定向，直接返回
             response.raise_for_status()
             return response.url, response.text
+            
         except Exception as e:
             console.print(f"[red]❌ 链接重定向失败: {e}[/red]")
             return None, None
