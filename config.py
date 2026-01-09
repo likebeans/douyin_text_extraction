@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """应用配置"""
     
     # 必需配置
-    dashscope_api_key: str = ""
+    dashscope_api_key: str = "sk-0d96a068912c44ac8e661f3419672c9d"
     
     # 可选配置
     max_video_duration: int = 600  # 最大视频时长（秒）
