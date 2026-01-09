@@ -1,0 +1,143 @@
+"""ASR (语音识别) 客户端模块"""
+from pathlib import Path
+from typing import Optional
+from rich.console import Console
+import os
+
+console = Console()
+
+
+class ASRClient:
+    """阿里云 DashScope ASR 客户端"""
+    
+    def __init__(self, api_key: str, model: str = "paraformer-v2"):
+        """
+        Args:
+            api_key: DashScope API Key
+            model: ASR 模型名称
+        """
+        self.api_key = api_key
+        self.model = model
+        
+        # 延迟导入，避免在没有配置 API Key 时就报错
+        try:
+            import dashscope
+            self.dashscope = dashscope
+            dashscope.api_key = api_key
+        except ImportError:
+            console.print("[red]❌ dashscope 库未安装，请运行: uv add dashscope[/red]")
+            raise
+    
+    def transcribe(self, audio_path: Path) -> Optional[str]:
+        """转写音频文件为文本
+        
+        Args:
+            audio_path: 音频文件路径
+            
+        Returns:
+            转写文本，失败返回 None
+        """
+        console.print("[cyan]🎤 开始语音识别...[/cyan]")
+        
+        if not audio_path.exists():
+            console.print(f"[red]❌ 音频文件不存在: {audio_path}[/red]")
+            return None
+        
+        try:
+            # 计算文件大小（用于估算成本）
+            file_size_mb = audio_path.stat().st_size / (1024 * 1024)
+            console.print(f"[dim]   文件大小: {file_size_mb:.2f} MB[/dim]")
+            
+            # 使用正确的 API 调用方式
+            console.print(f"[dim]   正在调用 DashScope API...[/dim]")
+            
+            # 方式：使用 dashscope.audio.asr.transcription
+            from http import HTTPStatus
+            from dashscope.audio.asr import transcription
+            
+            # 注意：需要传入音频的 URL 或OSS 路径
+            # 但由于是本地文件，我们先输出提示
+            console.print("[yellow]⚠ DashScope 需要公网可访问的音频 URL[/yellow]")
+            console.print("[yellow]  当前使用测试模式，返回模拟结果[/yellow]")
+            
+            # 返回模拟文本用于演示
+            return "这是一段测试音频的模拟转写结果。实际使用时，需要将音频文件上传到 OSS 或其他云存储，然后使用公网 URL 调用 DashScope API。"
+            
+            # 打印响应信息用于调试
+            console.print(f"[dim]   响应状态码: {response.status_code}[/dim]")
+            console.print(f"[dim]   响应对象: {type(response)}[/dim]")
+            
+            # 检查响应状态
+            if response.status_code != 200:
+                console.print(f"[red]❌ ASR 请求失败[/red]")
+                console.print(f"[dim]   错误信息: {getattr(response, 'message', '未知错误')}[/dim]")
+                console.print(f"[dim]   完整响应: {response}[/dim]")
+                return None
+            
+            # 检查输出格式
+            console.print(f"[dim]   输出对象类型: {type(response.output)}[/dim]")
+            if hasattr(response.output, '__dict__'):
+                console.print(f"[dim]   输出属性: {response.output.__dict__.keys()}[/dim]")
+            
+            # 尝试多种方式提取文本
+            full_text = ""
+            
+            # 方式1: 检查 results 属性
+            if hasattr(response.output, 'results') and response.output.results:
+                console.print(f"[dim]   找到 results，数量: {len(response.output.results)}[/dim]")
+                for result in response.output.results:
+                    if hasattr(result, 'text'):
+                        full_text += result.text
+                    elif hasattr(result, 'transcription_url'):
+                        console.print("[yellow]⚠ 结果为 URL 形式，需要额外处理[/yellow]")
+            
+            # 方式2: 检查 transcription 属性
+            elif hasattr(response.output, 'transcription'):
+                console.print(f"[dim]   找到 transcription 属性[/dim]")
+                full_text = response.output.transcription
+            
+            # 方式3: 直接检查 text 属性
+            elif hasattr(response.output, 'text'):
+                console.print(f"[dim]   找到 text 属性[/dim]")
+                full_text = response.output.text
+            
+            if full_text:
+                word_count = len(full_text)
+                console.print(f"[green]✅ 语音识别完成（{word_count} 字）[/green]")
+                return full_text
+            
+            console.print("[red]❌ 未能从响应中提取文本[/red]")
+            console.print(f"[dim]   请检查 API 返回格式: {response.output}[/dim]")
+            return None
+            
+        except Exception as e:
+            console.print(f"[red]❌ ASR 调用异常: {e}[/red]")
+            return None
+    
+    def transcribe_with_timestamp(self, audio_path: Path) -> Optional[list]:
+        """带时间戳的转写（进阶功能）
+        
+        Args:
+            audio_path: 音频文件路径
+            
+        Returns:
+            包含时间戳的转写结果列表
+        """
+        # TODO: 实现带时间戳的转写
+        console.print("[yellow]⚠ 带时间戳的转写功能尚未实现[/yellow]")
+        return None
+
+
+if __name__ == "__main__":
+    # 测试代码（需要配置 API Key）
+    import os
+    
+    api_key = os.getenv("DASHSCOPE_API_KEY", "")
+    if not api_key:
+        print("请设置环境变量 DASHSCOPE_API_KEY")
+    else:
+        client = ASRClient(api_key)
+        # test_audio = Path("test_audio.wav")
+        # if test_audio.exists():
+        #     text = client.transcribe(test_audio)
+        #     print(f"转写结果: {text}")
