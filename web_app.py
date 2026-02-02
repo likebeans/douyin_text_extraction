@@ -264,6 +264,12 @@ def save_config():
         }), 500
 
 
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check for container/orchestrator probes."""
+    return jsonify({'ok': True})
+
+
 @app.route('/api/extract', methods=['POST'])
 def extract_video():
     """提取视频文本 API"""

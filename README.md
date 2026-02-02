@@ -360,6 +360,25 @@ MIT License
 
 ---
 
+## 🐳 Docker 部署（API 服务）
+
+```bash
+# 首次/更新构建并后台启动
+docker compose up -d --build
+
+# 查看日志
+docker compose logs -f douyin-api
+
+# 停止
+docker compose down
+```
+
+- 默认端口：`5000`，访问：`http://localhost:5000`
+- 对外提供 API：`POST /api/extract`（详见 `docs/API对接文档.md`）
+- 配置：编辑项目根目录 `.env`（容器会通过 `env_file` 读取）
+
+---
+
 **维护者**: Developer  
 **最后更新**: 2026-01-09  
 **版本**: v0.3.0
