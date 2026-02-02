@@ -18,7 +18,8 @@ ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1
 
 # Install dependencies first (better layer caching)
-COPY pyproject.toml uv.lock ./
+# `uv sync` builds the local project; include README.md because it's referenced by `pyproject.toml`.
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev
 
 # Copy app
@@ -32,4 +33,3 @@ ENV FLASK_PORT=5000
 ENV FLASK_DEBUG=False
 
 CMD ["python", "web_app.py"]
-
