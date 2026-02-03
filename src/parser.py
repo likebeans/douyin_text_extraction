@@ -13,7 +13,8 @@ class DouyinLinkParser:
     
     # 正则表达式模式
     # 更新：支持连字符 - 在短链接中（如 9cZD_5-RWyI）
-    SHARE_TEXT_PATTERN = r'(https?://v\.douyin\.com/[A-Za-z0-9_-]+)'
+    # Keep the optional trailing slash. Some v.douyin.com short links may fail to resolve without it.
+    SHARE_TEXT_PATTERN = r'(https?://v\.douyin\.com/[A-Za-z0-9_-]+/?)'
     VIDEO_ID_PATTERN = r'/video/(\d+)'
     MODAL_ID_PATTERN = r'/modal/detail/(\d+)'
     # 支持更多 URL 格式
@@ -44,7 +45,10 @@ class DouyinLinkParser:
         """
         match = re.search(self.SHARE_TEXT_PATTERN, text)
         if match:
-            return match.group(1)
+            url = match.group(1)
+            if "v.douyin.com" in url and not url.endswith("/"):
+                url += "/"
+            return url
         
         # 检查是否直接是完整链接
         if 'douyin.com/video/' in text:
