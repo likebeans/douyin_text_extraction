@@ -14,11 +14,16 @@ class DouyinLinkParser:
     # 正则表达式模式
     # 更新：支持连字符 - 在短链接中（如 9cZD_5-RWyI）
     # Keep the optional trailing slash. Some v.douyin.com short links may fail to resolve without it.
-    SHARE_TEXT_PATTERN = r'(https?://v\.douyin\.com/[A-Za-z0-9_-]+/?)'
+    SHARE_TEXT_PATTERN = r'(https?://(?:v|www|m)\.douyin\.com/[^\s]+)'
     VIDEO_ID_PATTERN = r'/video/(\d+)'
     MODAL_ID_PATTERN = r'/modal/detail/(\d+)'
     # 支持更多 URL 格式
     VIDEO_ID_IN_URL_PATTERN = r'(?:/video/|video/|/share/video/)(\d+)'
+    SHARE_URL_PATTERNS = [
+        SHARE_TEXT_PATTERN,
+        r'(https?://www\.iesdouyin\.com/share/video/\d+[^\s]*)',
+        r'(https?://www\.douyin\.com/video/\d+[^\s]*)',
+    ]
     
     def __init__(self, timeout: int = 10):
         self.timeout = timeout
@@ -43,15 +48,21 @@ class DouyinLinkParser:
         Returns:
             提取到的短链接，如果没有则返回 None
         """
-        match = re.search(self.SHARE_TEXT_PATTERN, text)
-        if match:
-            url = match.group(1)
-            if "v.douyin.com" in url and not url.endswith("/"):
-                url += "/"
-            return url
+        for pattern in self.SHARE_URL_PATTERNS:
+            match = re.search(pattern, text)
+            if match:
+                url = match.group(1).strip()
+                url = url.rstrip(').,]}>\"\'')
+                if "v.douyin.com" in url and not url.endswith("/"):
+                    url += "/"
+                return url
         
         # 检查是否直接是完整链接
-        if 'douyin.com/video/' in text:
+        if 'douyin.com/video/' in text or 'iesdouyin.com/share/video/' in text:
+            match = re.search(r'(https?://[^\s]+)', text)
+            if match:
+                url = match.group(1).strip().rstrip(').,]}>\"\'')
+                return url
             return text
         
         return None
@@ -219,6 +230,25 @@ class DouyinLinkParser:
             if match:
                 og_url = match.group(1)
                 video_id = self.extract_video_id_from_url(og_url)
+                if video_id:
+                    return video_id
+
+            url_patterns = [
+                r'https?://www\.douyin\.com/video/\d+',
+                r'https?://www\.iesdouyin\.com/share/video/\d+',
+                r'https?://www\.douyin\.com/note/\d+',
+            ]
+            for pattern in url_patterns:
+                match = re.search(pattern, html)
+                if match:
+                    video_id = self.extract_video_id_from_url(match.group(0))
+                    if video_id:
+                        return video_id
+
+            location_pattern = re.compile(r'location\.href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+            match = location_pattern.search(html)
+            if match:
+                video_id = self.extract_video_id_from_url(match.group(1))
                 if video_id:
                     return video_id
             
