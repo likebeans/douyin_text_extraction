@@ -6,6 +6,8 @@ import oss2
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+from urllib.parse import quote, urlsplit
+from uuid import uuid4
 from rich.console import Console
 
 console = Console()
@@ -33,7 +35,9 @@ class OSSClient:
         bucket_name: str,
         endpoint: str,
         endpoint_internal: Optional[str] = None,
-        cdn_domain: Optional[str] = None
+        cdn_domain: Optional[str] = None,
+        request_timeout: int = 30,
+        sign_url_expires: int = 3600,
     ):
         """初始化 OSS 客户端
         
@@ -49,13 +53,34 @@ class OSSClient:
         self.endpoint = endpoint
         self.endpoint_internal = endpoint_internal
         self.cdn_domain = cdn_domain
-        
-        # 创建认证对象
+        self._cdn_url = self._https_endpoint(cdn_domain) if cdn_domain else None
+
+        self.sign_url_expires = sign_url_expires
         auth = oss2.Auth(access_key_id, access_key_secret)
-        
-        # 创建 Bucket 对象（优先使用内网 Endpoint，如果配置了的话）
-        # 注意：内网 Endpoint 只能在同地域的 ECS 上使用，外网访问必须用外网 Endpoint
-        self.bucket = oss2.Bucket(auth, endpoint, bucket_name)
+        external_endpoint = self._https_endpoint(endpoint)
+        transfer_endpoint = self._https_endpoint(endpoint_internal) if endpoint_internal else external_endpoint
+        self.bucket = oss2.Bucket(auth, transfer_endpoint, bucket_name, connect_timeout=request_timeout)
+        # 签名使用公网 Endpoint，避免向 DashScope 提交仅内网可访问的地址。
+        self.public_bucket = (
+            self.bucket if transfer_endpoint == external_endpoint
+            else oss2.Bucket(auth, external_endpoint, bucket_name, connect_timeout=request_timeout)
+        )
+
+    @staticmethod
+    def _https_endpoint(value: str) -> str:
+        parsed = urlsplit(value if "://" in value else f"https://{value}")
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+            or parsed.port not in (None, 443)
+        ):
+            raise ValueError("OSS Endpoint/CDN 必须是有效的 HTTPS 主机地址")
+        return f"https://{parsed.netloc}"
     
     def upload_audio(
         self,
@@ -81,7 +106,7 @@ class OSSClient:
             # 生成远程路径（使用时间戳避免冲突）
             if not remote_path:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                remote_path = f"douyin_audio/{timestamp}_{local_file.name}"
+                remote_path = f"douyin_audio/{timestamp}_{uuid4().hex}{local_file.suffix}"
             
             # 上传文件
             console.print(f"[dim]   本地文件: {local_file}[/dim]")
@@ -94,19 +119,14 @@ class OSSClient:
                 console.print(f"[red]❌ 上传失败，状态码: {result.status}[/red]")
                 return None
             
-            # 生成公网访问 URL
-            # 优先使用 CDN 域名（如果配置了），否则使用外网 Endpoint
             if self.cdn_domain:
-                # 使用 CDN 域名（需要确保 CDN 已配置并指向 OSS）
-                cdn_clean = self.cdn_domain.replace('http://', '').replace('https://', '')
-                public_url = f"https://{cdn_clean}/{remote_path}"
+                # 自定义 CDN 需要部署者配置回源权限；不把 OSS 签名套用到 CDN。
+                public_url = f"{self._cdn_url}/{quote(remote_path, safe='/')}"
             else:
-                # 使用外网 Endpoint
-                endpoint_clean = self.endpoint.replace('http://', '').replace('https://', '')
-                public_url = f"https://{self.bucket_name}.{endpoint_clean}/{remote_path}"
-            
-            console.print(f"[green]✅ 上传成功[/green]")
-            console.print(f"[dim]   公网 URL: {public_url[:80]}...[/dim]")
+                # 临时签名允许私有 Bucket，不要求把上传的音频设为公共可读。
+                public_url = self.public_bucket.sign_url('GET', remote_path, self.sign_url_expires)
+
+            console.print("[green]✅ 上传成功[/green]")
             
             return (public_url, remote_path)
             

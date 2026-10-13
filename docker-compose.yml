@@ -1,15 +1,20 @@
 services:
   douyin-api:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_LOCAL_ASR: ${INSTALL_LOCAL_ASR:-false}
     container_name: douyin-api
     ports:
-      - "5000:5000"
+      - "127.0.0.1:${FLASK_PORT:-5000}:5000"
     env_file:
       - .env
     environment:
       FLASK_HOST: "0.0.0.0"
       FLASK_PORT: "5000"
-      FLASK_DEBUG: "False"
+      FLASK_DEBUG: "false"
+      WEB_API_TOKEN: "${WEB_API_TOKEN:?Set a non-empty WEB_API_TOKEN in .env}"
+      WEB_CONFIG_ENABLED: "false"
     volumes:
       - ./output:/app/output
       - ./temp:/app/temp
@@ -19,4 +24,3 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-

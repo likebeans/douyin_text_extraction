@@ -6,44 +6,29 @@
 <div class="content-wrapper">
     <div class="card">
         <h2>📝 提取视频文本</h2>
-        <p class="subtitle">输入抖音视频链接或分享口令，快速提取视频中的文本内容</p>
-        
+        <p class="subtitle">输入抖音视频链接或分享口令，提取视频中的文本内容</p>
         <form id="extractForm" class="form">
             <div class="form-group">
-                <label for="link">抖音链接：</label>
-                <textarea 
-                    id="link" 
-                    name="link" 
-                    rows="3" 
-                    placeholder="请输入抖音视频链接或分享口令，例如：&#10;https://v.douyin.com/iRNBho6U/&#10;或完整的分享文本"
-                    required></textarea>
+                <label for="link">抖音链接</label>
+                <textarea id="link" name="link" rows="3" maxlength="8192" placeholder="请输入抖音视频链接或分享口令，例如：&#10;https://v.douyin.com/iRNBho6U/&#10;或完整的分享文本" required aria-describedby="linkHint"></textarea>
+                <small id="linkHint" class="form-hint">支持抖音短链接或完整分享文本。</small>
             </div>
-            
+            <div id="extractError" class="message message-error" role="alert" aria-live="assertive" tabindex="-1" style="display: none;"></div>
             <button type="submit" class="btn btn-primary" id="submitBtn">
                 <span class="btn-text">开始提取</span>
                 <span class="btn-loading" style="display: none;">处理中...</span>
             </button>
         </form>
     </div>
-    
-    <!-- 结果显示区域 -->
+
     <div id="resultArea" class="result-area" style="display: none;">
         <div class="card">
             <h2>📹 视频信息</h2>
             <div id="metadata" class="metadata"></div>
         </div>
-        
         <div class="card">
             <h2>📝 提取文本</h2>
             <div id="textContent" class="text-content"></div>
-        </div>
-    </div>
-    
-    <!-- 错误提示 -->
-    <div id="errorArea" class="error-area" style="display: none;">
-        <div class="card card-error">
-            <h2>❌ 错误</h2>
-            <p id="errorMessage"></p>
         </div>
     </div>
 </div>
@@ -51,110 +36,78 @@
 
 {% block scripts %}
 <script>
-document.getElementById('extractForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const link = document.getElementById('link').value.trim();
-    if (!link) {
-        showError('请输入抖音链接');
-        return;
-    }
-    
-    // 显示加载状态
-    const submitBtn = document.getElementById('submitBtn');
-    const btnText = submitBtn.querySelector('.btn-text');
-    const btnLoading = submitBtn.querySelector('.btn-loading');
-    submitBtn.disabled = true;
-    btnText.style.display = 'none';
-    btnLoading.style.display = 'inline';
-    
-    // 隐藏之前的错误和结果
-    document.getElementById('resultArea').style.display = 'none';
-    document.getElementById('errorArea').style.display = 'none';
-    
-    try {
-        const response = await fetch('/api/extract', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ link: link })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            // 显示结果
-            displayResult(data);
-        } else {
-            showError(data.error || '提取失败');
-        }
-    } catch (error) {
-        showError('网络错误: ' + error.message);
-    } finally {
-        // 恢复按钮状态
-        submitBtn.disabled = false;
-        btnText.style.display = 'inline';
-        btnLoading.style.display = 'none';
-    }
-});
-
-function displayResult(data) {
-    const { metadata, text } = data;
-    
-    // 显示元数据
-    const metadataHtml = `
-        <div class="metadata-item">
-            <strong>标题：</strong>${escapeHtml(metadata.title)}
-        </div>
-        <div class="metadata-item">
-            <strong>作者：</strong>${escapeHtml(metadata.author)}
-        </div>
-        <div class="metadata-item">
-            <strong>时长：</strong>${formatDuration(metadata.duration)}秒
-        </div>
-        <div class="metadata-item">
-            <strong>视频ID：</strong>${escapeHtml(metadata.video_id)}
-        </div>
-        <div class="metadata-item">
-            <strong>视频链接：</strong>
-            <a href="${escapeHtml(metadata.douyin_url)}" target="_blank">${escapeHtml(metadata.douyin_url)}</a>
-        </div>
-    `;
-    document.getElementById('metadata').innerHTML = metadataHtml;
-    
-    // 显示文本（保留换行）
-    const textHtml = text.split('\n').map(line => {
-        return line.trim() ? `<p>${escapeHtml(line)}</p>` : '<br>';
-    }).join('');
-    document.getElementById('textContent').innerHTML = textHtml || '<p class="text-muted">未识别到文本内容</p>';
-    
-    // 显示结果区域
-    document.getElementById('resultArea').style.display = 'block';
-    
-    // 滚动到结果区域
-    document.getElementById('resultArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
+const extractForm = document.getElementById('extractForm');
+const extractError = document.getElementById('extractError');
 
 function showError(message) {
-    document.getElementById('errorMessage').textContent = message;
-    document.getElementById('errorArea').style.display = 'block';
-    document.getElementById('errorArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    extractError.textContent = message;
+    extractError.style.display = 'block';
+    document.getElementById('resultArea').style.display = 'none';
+    extractError.focus();
 }
 
 function escapeHtml(text) {
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = text == null ? '' : String(text);
     return div.innerHTML;
 }
 
 function formatDuration(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    if (mins > 0) {
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    }
-    return secs.toString();
+    const value = Number(seconds) || 0;
+    const mins = Math.floor(value / 60);
+    const secs = value % 60;
+    return mins > 0 ? `${mins}分${secs ? `${secs}秒` : ''}` : `${secs}秒`;
 }
+
+function displayResult(data) {
+    const metadata = data.metadata || {};
+    const metadataHtml = `
+        <div class="metadata-item"><strong>标题：</strong>${escapeHtml(metadata.title)}</div>
+        <div class="metadata-item"><strong>作者：</strong>${escapeHtml(metadata.author)}</div>
+        <div class="metadata-item"><strong>时长：</strong>${formatDuration(metadata.duration)}</div>
+        <div class="metadata-item"><strong>视频ID：</strong>${escapeHtml(metadata.video_id)}</div>
+        <div class="metadata-item"><strong>视频链接：</strong><a href="${escapeHtml(metadata.douyin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(metadata.douyin_url)}</a></div>
+    `;
+    document.getElementById('metadata').innerHTML = metadataHtml;
+    const text = String(data.text || '');
+    document.getElementById('textContent').innerHTML = text
+        ? text.split('\n').map(line => line.trim() ? `<p>${escapeHtml(line)}</p>` : '<br>').join('')
+        : '<p class="text-muted">未识别到文本内容</p>';
+    document.getElementById('resultArea').style.display = 'block';
+    document.getElementById('resultArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+extractForm.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const link = document.getElementById('link').value.trim();
+    if (!link) {
+        showError('请输入抖音链接。');
+        return;
+    }
+    const submitButton = document.getElementById('submitBtn');
+    submitButton.disabled = true;
+    submitButton.querySelector('.btn-text').style.display = 'none';
+    submitButton.querySelector('.btn-loading').style.display = 'inline';
+    extractError.style.display = 'none';
+    document.getElementById('resultArea').style.display = 'none';
+    try {
+        const data = await window.apiFetch('/api/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ link })
+        });
+        displayResult(data);
+    } catch (error) {
+        if (error.status === 401) {
+            showError('认证失败（401）：请输入有效的 API 令牌后重试。');
+        } else {
+            showError(error.message || '提取失败，请稍后重试。');
+        }
+    } finally {
+        submitButton.disabled = false;
+        submitButton.querySelector('.btn-text').style.display = 'inline';
+        submitButton.querySelector('.btn-loading').style.display = 'none';
+    }
+});
 </script>
 {% endblock %}

@@ -37,6 +37,33 @@ body {
     font-weight: 600;
 }
 
+.api-token-form {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 420px;
+}
+
+.api-token-form input {
+    min-width: 0;
+    width: 180px;
+    padding: 10px;
+    border: 2px solid #d3d3d3;
+    border-radius: 6px;
+    font: inherit;
+}
+
+.api-token-form small,
+.api-token-form [role="status"] {
+    flex-basis: 100%;
+}
+
+.header {
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
 .nav {
     display: flex;
     gap: 20px;
@@ -221,8 +248,8 @@ body {
 }
 
 .form-hint {
-    color: #999;
-    font-size: 12px;
+    color: #626262;
+    font-size: 13px;
 }
 
 .form-hint a {
@@ -408,6 +435,56 @@ body {
     .btn {
         width: 100%;
         justify-content: center;
+    }
+}
+
+/* 键盘焦点、窄屏文本与减少动态效果偏好 */
+:focus-visible {
+    outline: 3px solid #3347a8;
+    outline-offset: 3px;
+}
+
+.form-group input:focus-visible,
+.form-group textarea:focus-visible,
+.form-group select:focus-visible {
+    outline: 3px solid #3347a8;
+    outline-offset: 2px;
+}
+
+.card,
+.form-section,
+.form-group {
+    min-width: 0;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.form-actions {
+    flex-wrap: wrap;
+}
+
+.metadata-item,
+.text-content,
+.message {
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+    .container { padding: 16px; }
+    .header { padding: 20px 16px; }
+    .form-section { padding: 16px; }
+    .provider-settings { padding: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition: none !important;
+        scroll-behavior: auto !important;
     }
 }
 

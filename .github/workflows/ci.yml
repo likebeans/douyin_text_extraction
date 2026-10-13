@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run offline tests
+        run: uv run --locked pytest
+      - name: Build wheel
+        run: uv build --wheel
+      - name: Smoke test installed CLI and Web assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)
+          python - "$WHEEL" <<'PY'
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as wheel:
+              names = set(wheel.namelist())
+          required = {
+              "config.py",
+              "main.py",
+              "web_app.py",
+              "run_web.py",
+              "src/service.py",
+              "templates/index.html",
+              "templates/config.html",
+              "static/style.css",
+          }
+          missing = sorted(required - names)
+          if missing:
+              raise SystemExit(f"wheel is missing: {', '.join(missing)}")
+          PY
+          TEMP_DIR=$(mktemp -d)
+          uv venv "$TEMP_DIR/venv"
+          uv pip install --python "$TEMP_DIR/venv/bin/python" "$WHEEL"
+          (cd "$TEMP_DIR" && "$TEMP_DIR/venv/bin/douyin-extract" --help)
+          (cd "$TEMP_DIR" && "$TEMP_DIR/venv/bin/python" -c 'from web_app import app; c=app.test_client(); assert c.get("/").status_code == 200; assert c.get("/static/style.css").status_code == 200')
+          rm -rf "$TEMP_DIR"

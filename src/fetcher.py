@@ -1,186 +1,219 @@
-"""抖音视频元数据获取模块 - 基于 HTML 解析"""
-import requests
-import re
+"""Fetch video metadata from Douyin's embedded page data."""
+from __future__ import annotations
+
 import json
+import re
 from typing import Optional
+from urllib.parse import urljoin, urlsplit, urlunsplit
+
+import requests
 from pydantic import BaseModel
+from requests.adapters import HTTPAdapter
 from rich.console import Console
+from urllib3.util.retry import Retry
+
+from src.media_url import is_platform_media_url
 
 console = Console()
 
 
 class VideoMetadata(BaseModel):
-    """视频元数据"""
+    """Metadata needed for transcription and display."""
+
     video_id: str
     title: str
     author: str
-    duration: int  # 秒
-    video_url: str  # 无水印视频地址
+    duration: int
+    video_url: str
     cover_url: str = ""
-    
+
 
 class DouyinFetcher:
-    """抖音视频元数据获取器 - 基于 HTML 解析
-    
-    参考 douyin-mcp-server 的实现方式：
-    1. 访问分享页面而非 API
-    2. 从 HTML 中提取嵌入的 JSON 数据
-    3. 解析 window._ROUTER_DATA 对象
-    """
-    
-    def __init__(self, timeout: int = 15):
+    """Retrieve video details by reading the HTML share page."""
+
+    MAX_REDIRECTS = 5
+    ALLOWED_HOSTS = {
+        "douyin.com",
+        "www.douyin.com",
+        "m.douyin.com",
+        "v.douyin.com",
+        "iesdouyin.com",
+        "www.iesdouyin.com",
+    }
+    ROUTER_DATA_PATTERN = re.compile(
+        r"window\._ROUTER_DATA\s*=\s*(.*?)</script>", re.DOTALL | re.IGNORECASE
+    )
+
+    def __init__(self, timeout: int = 15, retry_times: int = 3):
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
+        if retry_times < 0:
+            raise ValueError("retry_times cannot be negative")
         self.timeout = timeout
+        self.retry_times = retry_times
         self.session = requests.Session()
-        # 使用移动端 User-Agent（关键！）
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1'
-        })
-    
-    def fetch(self, video_id: str) -> Optional[VideoMetadata]:
-        """获取视频元数据
-        
-        Args:
-            video_id: 视频 ID
-            
-        Returns:
-            视频元数据对象，失败返回 None
-        """
-        console.print("[cyan]📡 正在获取视频信息...[/cyan]")
-        
+        self._closed = False
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1"
+            }
+        )
+        retry = Retry(
+            total=retry_times,
+            connect=retry_times,
+            read=retry_times,
+            status=retry_times,
+            backoff_factor=0.2,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+            respect_retry_after_header=True,
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+    def close(self) -> None:
+        """Close the underlying HTTP session and release adapter pools."""
+        if not self._closed:
+            self.session.close()
+            self.session.adapters.clear()
+            self._closed = True
+
+    @classmethod
+    def _validated_url(cls, url: str) -> Optional[str]:
         try:
-            # 1. 构建分享 URL
-            share_url = f'https://www.iesdouyin.com/share/video/{video_id}'
-            console.print(f"[dim]   访问: {share_url}[/dim]")
-            
-            # 2. 获取 HTML 页面
-            response = self.session.get(share_url, timeout=self.timeout)
-            response.raise_for_status()
-            
-            # 3. 从 HTML 中提取 window._ROUTER_DATA JSON
-            pattern = re.compile(
-                pattern=r"window\._ROUTER_DATA\s*=\s*(.*?)</script>",
-                flags=re.DOTALL,
-            )
-            match = pattern.search(response.text)
-            
-            if not match or not match.group(1):
-                console.print("[red]❌ 无法从 HTML 中提取数据[/red]")
-                console.print(f"[dim]   页面内容长度: {len(response.text)}[/dim]")
+            parts = urlsplit(url)
+            port = parts.port
+        except (TypeError, ValueError):
+            return None
+        host = parts.hostname
+        if parts.scheme.lower() not in {"http", "https"} or not host:
+            return None
+        if parts.username is not None or parts.password is not None:
+            return None
+        if host.lower() not in cls.ALLOWED_HOSTS:
+            return None
+        if port is not None and port != (443 if parts.scheme.lower() == "https" else 80):
+            return None
+        netloc = host.lower() + (f":{port}" if port is not None else "")
+        return urlunsplit((parts.scheme.lower(), netloc, parts.path or "/", parts.query, parts.fragment))
+
+    @staticmethod
+    def _close_response(response) -> None:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+    def _get_page(self, url: str):
+        """Follow at most five redirects, checking each target before request."""
+        current_url = self._validated_url(url)
+        if not current_url:
+            return None
+        for redirect_count in range(self.MAX_REDIRECTS + 1):
+            response = None
+            try:
+                response = self.session.get(
+                    current_url,
+                    allow_redirects=False,
+                    timeout=self.timeout,
+                )
+                actual_url = self._validated_url(getattr(response, "url", None) or current_url)
+                if not actual_url:
+                    console.print("[red]❌ 页面返回了非抖音地址[/red]")
+                    return None
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("Location")
+                    if not location:
+                        return None
+                    next_url = self._validated_url(urljoin(actual_url, location))
+                    if not next_url:
+                        console.print("[red]❌ 拒绝跟随到非抖音域名的重定向[/red]")
+                        return None
+                    if redirect_count >= self.MAX_REDIRECTS:
+                        console.print("[red]❌ 重定向次数超过限制[/red]")
+                        return None
+                    current_url = next_url
+                    continue
+                response.raise_for_status()
+                # Parse while the response is open, then close it before returning.
+                return actual_url, response.text
+            except requests.exceptions.RequestException as exc:
+                console.print(f"[red]❌ 网络请求失败: {exc}[/red]")
                 return None
-            
-            # 4. 解析 JSON 数据
-            json_str = match.group(1).strip()
-            json_data = json.loads(json_str)
-            
-            # 5. 处理两种内容类型（视频/图文）
-            VIDEO_ID_PAGE_KEY = "video_(id)/page"
-            NOTE_ID_PAGE_KEY = "note_(id)/page"
-            
+            finally:
+                if response is not None:
+                    self._close_response(response)
+        return None
+
+    def fetch(self, video_id: str) -> Optional[VideoMetadata]:
+        """Fetch metadata for a numeric video or note ID."""
+        if not isinstance(video_id, str) or not video_id.isdigit():
+            console.print("[red]❌ 视频 ID 必须为数字[/red]")
+            return None
+        console.print("[cyan]📡 正在获取视频信息...[/cyan]")
+        share_url = f"https://www.iesdouyin.com/share/video/{video_id}"
+        console.print(f"[dim]   访问: {share_url}[/dim]")
+
+        page = self._get_page(share_url)
+        if not page:
+            return None
+        _, html = page
+        match = self.ROUTER_DATA_PATTERN.search(html)
+        if not match:
+            console.print("[red]❌ 无法从 HTML 中提取数据[/red]")
+            console.print(f"[dim]   页面内容长度: {len(html)}[/dim]")
+            return None
+        try:
+            json_data, _ = json.JSONDecoder().raw_decode(match.group(1).strip())
             loader_data = json_data.get("loaderData", {})
-            
-            if VIDEO_ID_PAGE_KEY in loader_data:
-                console.print("[dim]   检测到视频类型[/dim]")
-                original_video_info = loader_data[VIDEO_ID_PAGE_KEY]["videoInfoRes"]
-            elif NOTE_ID_PAGE_KEY in loader_data:
-                console.print("[dim]   检测到图文/笔记类型[/dim]")
-                original_video_info = loader_data[NOTE_ID_PAGE_KEY]["videoInfoRes"]
-            else:
-                console.print(f"[red]❌ 未知的数据格式[/red]")
-                console.print(f"[dim]   loaderData keys: {list(loader_data.keys())}[/dim]")
+            page_data = loader_data.get("video_(id)/page") or loader_data.get("note_(id)/page")
+            if not isinstance(page_data, dict):
+                console.print("[red]❌ 未知的数据格式[/red]")
                 return None
-            
-            # 6. 提取视频详情
-            if "item_list" not in original_video_info or not original_video_info["item_list"]:
-                console.print("[red]❌ item_list 为空[/red]")
+            video_info_res = page_data.get("videoInfoRes", {})
+            item_list = video_info_res.get("item_list", []) if isinstance(video_info_res, dict) else []
+            if not item_list or not isinstance(item_list[0], dict):
+                console.print("[red]❌ item_list 为空，笔记可能没有视频[/red]")
                 return None
-            
-            data = original_video_info["item_list"][0]
-            
-            # 7. 提取视频播放地址
-            video_info = data.get("video", {})
-            play_addr = video_info.get("play_addr", {})
-            url_list = play_addr.get("url_list", [])
-            
-            if not url_list:
-                console.print("[red]❌ 无法获取视频播放地址[/red]")
+            item = item_list[0]
+            video_info = item.get("video") or {}
+            if not isinstance(video_info, dict):
+                video_info = {}
+            play_addr = video_info.get("play_addr") or {}
+            url_list = play_addr.get("url_list", []) if isinstance(play_addr, dict) else []
+            if not url_list or not isinstance(url_list[0], str):
+                console.print("[red]❌ 内容不包含可用视频，图文笔记无法转写[/red]")
                 return None
-            
-            video_url = url_list[0]
-            
-            # 8. 获取无水印链接（关键步骤！）
-            video_url = video_url.replace("playwm", "play")
-            
-            # 9. 提取其他信息
-            title = data.get("desc", "").strip()
-            if not title:
-                title = f"douyin_{video_id}"
-            
-            # 替换文件名中的非法字符
-            title = re.sub(r'[\\/:*?"<>|]', '_', title)
-            
-            author_info = data.get("author", {})
-            author = author_info.get("nickname", "未知作者")
-            
+            video_url = url_list[0].replace("playwm", "play")
+            if not is_platform_media_url(video_url):
+                console.print("[red]❌ 页面返回了非平台媒体地址[/red]")
+                return None
+            title = item.get("desc") or f"douyin_{video_id}"
+            author_info = item.get("author") or {}
+            author = author_info.get("nickname", "未知作者") if isinstance(author_info, dict) else "未知作者"
             duration = video_info.get("duration", 0)
-            if duration > 1000:  # 如果是毫秒，转换为秒
-                duration = duration // 1000
-            
-            cover_info = video_info.get("cover", {})
-            cover_url = ""
-            if isinstance(cover_info, dict):
-                cover_url_list = cover_info.get("url_list", [])
-                if cover_url_list:
-                    cover_url = cover_url_list[0]
-            
-            # 10. 构建元数据对象
+            if isinstance(duration, (int, float)) and duration >= 1000:
+                duration = int(duration // 1000)
+            else:
+                duration = int(duration or 0)
+            cover_info = video_info.get("cover") or {}
+            cover_urls = cover_info.get("url_list", []) if isinstance(cover_info, dict) else []
+            cover_url = cover_urls[0] if cover_urls else ""
             metadata = VideoMetadata(
                 video_id=video_id,
-                title=title,
+                title=title.strip(),
                 author=author,
                 duration=duration,
                 video_url=video_url,
-                cover_url=cover_url
+                cover_url=cover_url,
             )
-            
-            console.print(f"[green]✅ 视频信息获取成功[/green]")
-            console.print(f"   标题: {metadata.title[:50]}{'...' if len(metadata.title) > 50 else ''}")
-            console.print(f"   作者: {metadata.author}")
-            console.print(f"   时长: {metadata.duration} 秒")
-            
-            return metadata
-            
-        except requests.exceptions.RequestException as e:
-            console.print(f"[red]❌ 网络请求失败: {e}[/red]")
-            return None
-        except json.JSONDecodeError as e:
-            console.print(f"[red]❌ JSON 解析失败: {e}[/red]")
-            return None
-        except (KeyError, ValueError, IndexError) as e:
-            console.print(f"[red]❌ 数据解析失败: {e}[/red]")
-            import traceback
-            console.print(f"[dim]{traceback.format_exc()}[/dim]")
-            return None
-        except Exception as e:
-            console.print(f"[red]❌ 未知错误: {e}[/red]")
-            import traceback
-            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, IndexError) as exc:
+            console.print(f"[red]❌ 数据解析失败: {exc}[/red]")
             return None
 
-
-if __name__ == "__main__":
-    # 测试代码
-    fetcher = DouyinFetcher()
-    
-    # 使用真实的视频 ID 测试
-    test_video_id = "7570933456504326888"
-    metadata = fetcher.fetch(test_video_id)
-    
-    if metadata:
-        print(f"\n✅ 测试成功！")
-        print(f"  视频ID: {metadata.video_id}")
-        print(f"  标题: {metadata.title}")
-        print(f"  作者: {metadata.author}")
-        print(f"  时长: {metadata.duration}秒")
-        print(f"  视频URL: {metadata.video_url[:80]}...")
-    else:
-        print("\n❌ 测试失败")
+        console.print("[green]✅ 视频信息获取成功[/green]")
+        console.print(f"   标题: {metadata.title[:50]}{'...' if len(metadata.title) > 50 else ''}")
+        console.print(f"   作者: {metadata.author}")
+        console.print(f"   时长: {metadata.duration} 秒")
+        return metadata

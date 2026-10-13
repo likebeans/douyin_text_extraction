@@ -10,21 +10,63 @@
     <div class="container">
         <header class="header">
             <h1>🎬 抖音视频文本提取工具</h1>
-            <nav class="nav">
+            <nav class="nav" aria-label="主导航">
                 <a href="{{ url_for('index') }}">首页</a>
                 <a href="{{ url_for('config_page') }}">配置</a>
             </nav>
+            <form id="apiTokenForm" class="api-token-form form-group" autocomplete="off">
+                <label for="apiTokenInput">API 令牌</label>
+                <input id="apiTokenInput" type="password" autocomplete="off" aria-describedby="apiTokenHelp" placeholder="本机模式可留空">
+                <button type="submit" class="btn btn-secondary">应用</button>
+                <small id="apiTokenHelp" class="form-hint">令牌仅保存在当前页面内存中</small>
+                <span id="apiTokenStatus" class="form-hint" role="status" aria-live="polite"></span>
+            </form>
         </header>
-        
+
         <main class="main">
             {% block content %}{% endblock %}
         </main>
-        
+
         <footer class="footer">
             <p>快速将抖音视频转换为可编辑文本</p>
         </footer>
     </div>
-    
+
+    <script>
+    (function () {
+        let apiToken = '';
+        const tokenForm = document.getElementById('apiTokenForm');
+        const tokenInput = document.getElementById('apiTokenInput');
+
+        window.apiFetch = async function (url, options = {}) {
+            const headers = new Headers(options.headers || {});
+            if (apiToken) headers.set('X-API-Token', apiToken);
+            const response = await fetch(url, { ...options, headers });
+            let data;
+            try {
+                data = await response.json();
+            } catch (_) {
+                data = { success: false, error: '服务器返回了无效响应' };
+            }
+            if (!response.ok || data.success === false) {
+                const error = new Error(data.error || `请求失败（${response.status}）`);
+                error.status = response.status;
+                throw error;
+            }
+            return data;
+        };
+
+        tokenForm.addEventListener('submit', function (event) {
+            event.preventDefault();
+            apiToken = tokenInput.value.trim();
+            tokenInput.value = '';
+            tokenForm.dispatchEvent(new CustomEvent('api-token-changed', { bubbles: true }));
+            const status = document.getElementById('apiTokenStatus');
+            if (status) status.textContent = apiToken ? '令牌已应用，可继续操作。' : '已清除令牌，仅限本机访问。';
+            tokenForm.dispatchEvent(new Event('api-token-updated'));
+        });
+    }());
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

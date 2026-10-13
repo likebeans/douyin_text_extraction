@@ -6,357 +6,244 @@
 <div class="content-wrapper">
     <div class="card">
         <h2>⚙️ 系统配置</h2>
-        <p class="subtitle">配置 API Key 和其他参数</p>
-        
+        <p class="subtitle">配置语音识别服务和视频处理参数</p>
+        <p id="environmentNotice" class="form-hint" style="display: none;" role="status" aria-live="polite">部分设置由环境变量管理，页面不会覆盖这些设置。</p>
+
         <form id="configForm" class="form">
-            <!-- ASR 提供商选择 -->
             <div class="form-section">
                 <h3>🎤 ASR 提供商</h3>
-                
                 <div class="form-group">
                     <label for="ASR_PROVIDER">ASR 提供商 <span class="required">*</span></label>
-                    <select id="ASR_PROVIDER" name="ASR_PROVIDER" onchange="toggleProviderSettings()">
-                        <option value="dashscope" {% if config.ASR_PROVIDER == 'dashscope' %}selected{% endif %}>DashScope (云端，推荐)</option>
-                        <option value="local" {% if config.ASR_PROVIDER == 'local' %}selected{% endif %}>Local Whisper (本地)</option>
+                    <select id="ASR_PROVIDER" name="ASR_PROVIDER" aria-describedby="providerHint">
+                        <option value="dashscope">DashScope（云端）</option>
+                        <option value="local">Local Whisper（本地）</option>
                     </select>
-                    <small class="form-hint">选择语音识别提供商：DashScope 为云端服务，Local 需要本地 Whisper 模型</small>
+                    <small id="providerHint" class="form-hint">选择语音识别提供商。Local 需要安装 Whisper 和 FFmpeg。</small>
                 </div>
-                
-                <!-- DashScope 配置 -->
+
                 <div id="dashscope-settings" class="provider-settings">
                     <div class="form-group">
-                        <label for="DASHSCOPE_API_KEY">
-                            DashScope API Key <span class="required">*</span>
-                        </label>
-                        <input 
-                            type="text" 
-                            id="DASHSCOPE_API_KEY" 
-                            name="DASHSCOPE_API_KEY" 
-                            placeholder="sk-..."
-                            value="{{ masked_key }}">
-                        <small class="form-hint">
-                            阿里云 DashScope API Key，用于云端语音识别服务。
-                            <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank">获取 API Key</a>
-                        </small>
+                        <label for="DASHSCOPE_API_KEY">DashScope API Key</label>
+                        <input type="password" id="DASHSCOPE_API_KEY" name="DASHSCOPE_API_KEY" autocomplete="new-password" aria-describedby="dashscopeKeyHint">
+                        <small id="dashscopeKeyHint" class="form-hint">留空会保留已保存的密钥。<span id="dashscopeKeyStatus">尚未读取配置</span>。<a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" rel="noopener noreferrer">获取 API Key</a></small>
                     </div>
-                    
                     <div class="form-group">
                         <label for="ASR_MODEL">ASR 模型</label>
-                        <select id="ASR_MODEL" name="ASR_MODEL">
-                            <option value="paraformer-v2" {% if config.ASR_MODEL == 'paraformer-v2' %}selected{% endif %}>paraformer-v2 (推荐)</option>
-                            <option value="paraformer-realtime-v2" {% if config.ASR_MODEL == 'paraformer-realtime-v2' %}selected{% endif %}>paraformer-realtime-v2</option>
-                            <option value="paraformer-realtime-8k-v2" {% if config.ASR_MODEL == 'paraformer-realtime-8k-v2' %}selected{% endif %}>paraformer-realtime-8k-v2</option>
+                        <select id="ASR_MODEL" name="ASR_MODEL" aria-describedby="modelHint">
+                            <option value="paraformer-v2">paraformer-v2（文件识别）</option>
                         </select>
-                        <small class="form-hint">选择 DashScope 语音识别模型</small>
+                        <small id="modelHint" class="form-hint">仅支持文件识别模型 paraformer-v2。</small>
                     </div>
                 </div>
-                
-                <!-- Local Whisper 提示 -->
+
                 <div id="local-settings" class="provider-settings" style="display: none;">
-                    <div class="form-group">
-                        <div class="info-box">
-                            <strong>📝 Local Whisper 说明：</strong>
-                            <ul>
-                                <li>使用本地 Whisper 模型进行语音识别</li>
-                                <li>需要安装 Whisper 和相关依赖</li>
-                                <li>首次使用会自动下载模型（约 3-5 GB）</li>
-                                <li>需要 GPU 支持以获得最佳性能，CPU 也可运行但较慢</li>
-                                <li>无需 API Key，完全本地运行</li>
-                            </ul>
-                        </div>
+                    <div class="info-box">
+                        <strong>Local Whisper 说明：</strong>
+                        <ul>
+                            <li>在本机完成语音识别，无需云端 API Key</li>
+                            <li>需要安装 Whisper 和 FFmpeg；首次使用会下载所选模型</li>
+                            <li>CPU 可运行，GPU 可提升处理速度</li>
+                        </ul>
                     </div>
                 </div>
             </div>
-            
-            <!-- 基础配置 -->
+
             <div class="form-section">
                 <h3>⚙️ 基础配置</h3>
-                
                 <div class="form-group">
                     <label for="MAX_VIDEO_DURATION">最大视频时长（秒）</label>
-                    <input 
-                        type="number" 
-                        id="MAX_VIDEO_DURATION" 
-                        name="MAX_VIDEO_DURATION" 
-                        min="1" 
-                        max="3600"
-                        value="{{ config.MAX_VIDEO_DURATION }}">
-                    <small class="form-hint">超过此时长的视频将被拒绝处理</small>
+                    <input type="number" id="MAX_VIDEO_DURATION" name="MAX_VIDEO_DURATION" min="1" max="3600" required aria-describedby="durationHint">
+                    <small id="durationHint" class="form-hint">范围为 1 到 3600 秒。</small>
                 </div>
-                
                 <div class="form-group">
                     <label for="OUTPUT_DIR">输出目录</label>
-                    <input 
-                        type="text" 
-                        id="OUTPUT_DIR" 
-                        name="OUTPUT_DIR" 
-                        value="{{ config.OUTPUT_DIR }}">
-                    <small class="form-hint">文本文件的保存目录（相对路径）</small>
+                    <input type="text" id="OUTPUT_DIR" name="OUTPUT_DIR" maxlength="1024" required aria-describedby="outputHint">
+                    <small id="outputHint" class="form-hint">文本文件的保存目录。</small>
                 </div>
             </div>
-            
-            <!-- OSS 配置 -->
+
             <div class="form-section">
                 <h3>☁️ OSS 配置（兜底方案，可选）</h3>
-                <p class="subtitle">当直接使用视频 URL 失败时，可以启用 OSS 上传音频文件作为兜底方案</p>
-                
+                <p class="subtitle">可在直接识别视频链接失败时，通过 OSS 兜底处理。</p>
                 <div class="form-group">
                     <label for="OSS_ENABLE_FALLBACK">
-                        <input 
-                            type="checkbox" 
-                            id="OSS_ENABLE_FALLBACK" 
-                            name="OSS_ENABLE_FALLBACK" 
-                            {% if config.OSS_ENABLE_FALLBACK == 'true' or config.OSS_ENABLE_FALLBACK == 'True' %}checked{% endif %}
-                            onchange="toggleOSSSettings()">
+                        <input type="checkbox" id="OSS_ENABLE_FALLBACK" name="OSS_ENABLE_FALLBACK">
                         <span>启用 OSS 兜底方案</span>
                     </label>
-                    <small class="form-hint">当视频 URL 无法直接使用时，上传音频到 OSS 后再进行识别</small>
+                    <small class="form-hint">关闭此选项不会删除已保存的 OSS 凭据。</small>
                 </div>
-                
-                <div id="oss-settings" class="provider-settings" style="display: {% if config.OSS_ENABLE_FALLBACK == 'true' or config.OSS_ENABLE_FALLBACK == 'True' %}block{% else %}none{% endif %};">
+                <div id="oss-settings" class="provider-settings" style="display: none;">
                     <div class="form-group">
                         <label for="OSS_ACCESS_KEY_ID">OSS AccessKey ID</label>
-                        <input 
-                            type="text" 
-                            id="OSS_ACCESS_KEY_ID" 
-                            name="OSS_ACCESS_KEY_ID" 
-                            placeholder="LTAI..."
-                            value="{{ config.OSS_ACCESS_KEY_ID }}">
-                        <small class="form-hint">阿里云 OSS AccessKey ID</small>
+                        <input type="password" id="OSS_ACCESS_KEY_ID" name="OSS_ACCESS_KEY_ID" autocomplete="new-password" aria-describedby="ossIdHint">
+                        <small id="ossIdHint" class="form-hint">留空会保留已保存的值。<span id="ossIdStatus">尚未读取配置</span></small>
                     </div>
-                    
                     <div class="form-group">
                         <label for="OSS_ACCESS_KEY_SECRET">OSS AccessKey Secret</label>
-                        <input 
-                            type="password" 
-                            id="OSS_ACCESS_KEY_SECRET" 
-                            name="OSS_ACCESS_KEY_SECRET" 
-                            placeholder="..."
-                            value="{{ config.OSS_ACCESS_KEY_SECRET_MASKED if config.OSS_ACCESS_KEY_SECRET_MASKED else '' }}">
-                        <small class="form-hint">阿里云 OSS AccessKey Secret（敏感信息，保存后会部分隐藏）</small>
+                        <input type="password" id="OSS_ACCESS_KEY_SECRET" name="OSS_ACCESS_KEY_SECRET" autocomplete="new-password" aria-describedby="ossSecretHint">
+                        <small id="ossSecretHint" class="form-hint">留空会保留已保存的密钥。<span id="ossSecretStatus">尚未读取配置</span></small>
                     </div>
-                    
                     <div class="form-group">
                         <label for="OSS_BUCKET_NAME">OSS Bucket 名称</label>
-                        <input 
-                            type="text" 
-                            id="OSS_BUCKET_NAME" 
-                            name="OSS_BUCKET_NAME" 
-                            placeholder="my-bucket"
-                            value="{{ config.OSS_BUCKET_NAME }}">
-                        <small class="form-hint">OSS 存储桶名称</small>
+                        <input type="text" id="OSS_BUCKET_NAME" name="OSS_BUCKET_NAME" maxlength="4096">
                     </div>
-                    
                     <div class="form-group">
                         <label for="OSS_ENDPOINT">OSS Endpoint</label>
-                        <input 
-                            type="text" 
-                            id="OSS_ENDPOINT" 
-                            name="OSS_ENDPOINT" 
-                            placeholder="oss-cn-hangzhou.aliyuncs.com"
-                            value="{{ config.OSS_ENDPOINT }}">
-                        <small class="form-hint">OSS 服务端点，例如：oss-cn-hangzhou.aliyuncs.com</small>
+                        <input type="text" id="OSS_ENDPOINT" name="OSS_ENDPOINT" maxlength="4096" placeholder="oss-cn-hangzhou.aliyuncs.com">
+                        <small class="form-hint">填写 OSS 服务端点，例如 oss-cn-hangzhou.aliyuncs.com。</small>
                     </div>
                 </div>
             </div>
-            
+
+            <div id="configError" class="message message-error" role="alert" aria-live="assertive" tabindex="-1" style="display: none;"></div>
+            <div id="saveMessage" class="message" role="status" aria-live="polite" style="display: none;"></div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary" id="saveBtn">
                     <span class="btn-text">保存配置</span>
                     <span class="btn-loading" style="display: none;">保存中...</span>
                 </button>
-                <button type="button" class="btn btn-secondary" onclick="loadConfig()">重新加载</button>
+                <button type="button" class="btn btn-secondary" id="reloadConfigBtn">重新加载</button>
             </div>
         </form>
-        
-        <!-- 保存提示 -->
-        <div id="saveMessage" class="message" style="display: none;"></div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// 切换 ASR 提供商设置显示
+const configFields = [
+    'ASR_PROVIDER', 'DASHSCOPE_API_KEY', 'ASR_MODEL', 'MAX_VIDEO_DURATION', 'OUTPUT_DIR',
+    'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET', 'OSS_BUCKET_NAME', 'OSS_ENDPOINT'
+];
+let loadedConfig = null;
+
 function toggleProviderSettings() {
     const provider = document.getElementById('ASR_PROVIDER').value;
-    const dashscopeSettings = document.getElementById('dashscope-settings');
-    const localSettings = document.getElementById('local-settings');
-    
-    if (provider === 'dashscope') {
-        dashscopeSettings.style.display = 'block';
-        localSettings.style.display = 'none';
-        document.getElementById('DASHSCOPE_API_KEY').required = true;
-    } else {
-        dashscopeSettings.style.display = 'none';
-        localSettings.style.display = 'block';
-        document.getElementById('DASHSCOPE_API_KEY').required = false;
-    }
+    document.getElementById('dashscope-settings').style.display = provider === 'dashscope' ? 'block' : 'none';
+    document.getElementById('local-settings').style.display = provider === 'local' ? 'block' : 'none';
 }
 
-// 切换 OSS 设置显示
 function toggleOSSSettings() {
-    const enabled = document.getElementById('OSS_ENABLE_FALLBACK').checked;
-    const ossSettings = document.getElementById('oss-settings');
-    ossSettings.style.display = enabled ? 'block' : 'none';
+    document.getElementById('oss-settings').style.display = document.getElementById('OSS_ENABLE_FALLBACK').checked ? 'block' : 'none';
 }
 
-// 页面加载时初始化
-document.addEventListener('DOMContentLoaded', function() {
-    toggleProviderSettings();
-    toggleOSSSettings();
-});
+function showConfigError(message) {
+    const error = document.getElementById('configError');
+    error.textContent = message;
+    error.style.display = 'block';
+    document.getElementById('saveMessage').style.display = 'none';
+    error.focus();
+}
 
-// 页面加载时获取完整配置（如果需要）
+function showMessage(message) {
+    const status = document.getElementById('saveMessage');
+    status.textContent = message;
+    status.className = 'message message-success';
+    status.style.display = 'block';
+    document.getElementById('configError').style.display = 'none';
+}
+
 async function loadConfig() {
+    const reloadButton = document.getElementById('reloadConfigBtn');
+    reloadButton.disabled = true;
+    document.getElementById('configError').style.display = 'none';
     try {
-        const response = await fetch('/api/config');
-        const data = await response.json();
-        
-        if (data.success) {
-            const config = data.config;
-            
-            // 更新 ASR 提供商
-            document.getElementById('ASR_PROVIDER').value = config.ASR_PROVIDER || 'dashscope';
-            toggleProviderSettings();
-            
-            // 更新 DashScope 配置（注意：API Key 已经脱敏）
-            if (config.DASHSCOPE_API_KEY) {
-                document.getElementById('DASHSCOPE_API_KEY').value = config.DASHSCOPE_API_KEY;
-            }
-            document.getElementById('ASR_MODEL').value = config.ASR_MODEL || 'paraformer-v2';
-            
-            // 更新基础配置
-            document.getElementById('MAX_VIDEO_DURATION').value = config.MAX_VIDEO_DURATION || '600';
-            document.getElementById('OUTPUT_DIR').value = config.OUTPUT_DIR || './output';
-            
-            // 更新 OSS 配置
-            document.getElementById('OSS_ENABLE_FALLBACK').checked = config.OSS_ENABLE_FALLBACK === 'true' || config.OSS_ENABLE_FALLBACK === 'True';
-            toggleOSSSettings();
-            if (config.OSS_ACCESS_KEY_ID) {
-                document.getElementById('OSS_ACCESS_KEY_ID').value = config.OSS_ACCESS_KEY_ID;
-            }
-            if (config.OSS_ACCESS_KEY_SECRET) {
-                document.getElementById('OSS_ACCESS_KEY_SECRET').value = config.OSS_ACCESS_KEY_SECRET;
-            }
-            if (config.OSS_BUCKET_NAME) {
-                document.getElementById('OSS_BUCKET_NAME').value = config.OSS_BUCKET_NAME;
-            }
-            if (config.OSS_ENDPOINT) {
-                document.getElementById('OSS_ENDPOINT').value = config.OSS_ENDPOINT;
-            }
-            
-            showMessage('配置已重新加载', 'success');
+        const data = await window.apiFetch('/api/config');
+        const config = data.config;
+        loadedConfig = config;
+        document.getElementById('ASR_PROVIDER').value = config.ASR_PROVIDER;
+        document.getElementById('ASR_MODEL').value = config.ASR_MODEL;
+        document.getElementById('MAX_VIDEO_DURATION').value = config.MAX_VIDEO_DURATION;
+        document.getElementById('OUTPUT_DIR').value = config.OUTPUT_DIR;
+        document.getElementById('OSS_ENABLE_FALLBACK').checked = config.OSS_ENABLE_FALLBACK === 'true';
+        for (const field of ['DASHSCOPE_API_KEY', 'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET']) {
+            document.getElementById(field).value = '';
         }
+        for (const field of ['OSS_BUCKET_NAME', 'OSS_ENDPOINT']) {
+            document.getElementById(field).value = config[field] || '';
+        }
+        document.getElementById('dashscopeKeyStatus').textContent = config.DASHSCOPE_API_KEY_CONFIGURED ? '已配置' : '尚未配置';
+        document.getElementById('ossIdStatus').textContent = config.OSS_ACCESS_KEY_ID_CONFIGURED ? '已配置' : '尚未配置';
+        document.getElementById('ossSecretStatus').textContent = config.OSS_ACCESS_KEY_SECRET_CONFIGURED ? '已配置' : '尚未配置';
+        document.getElementById('environmentNotice').style.display = config.ENVIRONMENT_FIELDS.length ? 'block' : 'none';
+        toggleProviderSettings();
+        toggleOSSSettings();
+        showMessage('配置已加载');
     } catch (error) {
-        showMessage('加载配置失败: ' + error.message, 'error');
+        if (error.status === 401) {
+            showConfigError('认证失败（401）：请输入有效的 API 令牌后重试。');
+        } else {
+            showConfigError(`加载配置失败：${error.message}`);
+        }
+    } finally {
+        reloadButton.disabled = false;
     }
 }
 
-document.getElementById('configForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const provider = document.getElementById('ASR_PROVIDER').value;
-    let apiKey = '';
-    
-    // 如果使用 DashScope，验证 API Key
-    if (provider === 'dashscope') {
-        const apiKeyInput = document.getElementById('DASHSCOPE_API_KEY');
-        apiKey = apiKeyInput.value.trim();
-        
-        // 如果值是 masked 的（包含...），提示用户输入完整值
-        if (apiKey.includes('...') || (apiKey.length > 0 && apiKey.length < 10)) {
-            showMessage('请输入完整的 DashScope API Key', 'error');
-            apiKeyInput.focus();
-            return;
-        }
-        
-        if (!apiKey) {
-            showMessage('DashScope API Key 是必填项', 'error');
-            apiKeyInput.focus();
-            return;
-        }
-    }
-    
-    // 验证 OSS 配置（如果启用）
-    const ossEnabled = document.getElementById('OSS_ENABLE_FALLBACK').checked;
-    if (ossEnabled) {
-        const ossAccessKeyId = document.getElementById('OSS_ACCESS_KEY_ID').value.trim();
-        const ossAccessKeySecret = document.getElementById('OSS_ACCESS_KEY_SECRET').value.trim();
-        const ossBucketName = document.getElementById('OSS_BUCKET_NAME').value.trim();
-        const ossEndpoint = document.getElementById('OSS_ENDPOINT').value.trim();
-        
-        if (!ossAccessKeyId || !ossAccessKeySecret || !ossBucketName || !ossEndpoint) {
-            showMessage('启用 OSS 兜底方案时，所有 OSS 配置项都是必填的', 'error');
-            return;
-        }
-    }
-    
-    const configData = {
-        ASR_PROVIDER: provider,
-        DASHSCOPE_API_KEY: provider === 'dashscope' ? apiKey : '',
+function configPayload() {
+    const payload = {
+        ASR_PROVIDER: document.getElementById('ASR_PROVIDER').value,
+        DASHSCOPE_API_KEY: document.getElementById('DASHSCOPE_API_KEY').value.trim(),
         ASR_MODEL: document.getElementById('ASR_MODEL').value,
         MAX_VIDEO_DURATION: document.getElementById('MAX_VIDEO_DURATION').value,
-        OUTPUT_DIR: document.getElementById('OUTPUT_DIR').value,
-        OSS_ENABLE_FALLBACK: ossEnabled ? 'true' : 'false',
-        OSS_ACCESS_KEY_ID: ossEnabled ? document.getElementById('OSS_ACCESS_KEY_ID').value.trim() : '',
-        OSS_ACCESS_KEY_SECRET: ossEnabled ? document.getElementById('OSS_ACCESS_KEY_SECRET').value.trim() : '',
-        OSS_BUCKET_NAME: ossEnabled ? document.getElementById('OSS_BUCKET_NAME').value.trim() : '',
-        OSS_ENDPOINT: ossEnabled ? document.getElementById('OSS_ENDPOINT').value.trim() : '',
+        OUTPUT_DIR: document.getElementById('OUTPUT_DIR').value.trim(),
+        OSS_ENABLE_FALLBACK: document.getElementById('OSS_ENABLE_FALLBACK').checked,
+        OSS_ACCESS_KEY_ID: document.getElementById('OSS_ACCESS_KEY_ID').value.trim(),
+        OSS_ACCESS_KEY_SECRET: document.getElementById('OSS_ACCESS_KEY_SECRET').value.trim(),
+        OSS_BUCKET_NAME: document.getElementById('OSS_BUCKET_NAME').value.trim(),
+        OSS_ENDPOINT: document.getElementById('OSS_ENDPOINT').value.trim()
     };
-    
-    // 显示加载状态
-    const saveBtn = document.getElementById('saveBtn');
-    const btnText = saveBtn.querySelector('.btn-text');
-    const btnLoading = saveBtn.querySelector('.btn-loading');
-    saveBtn.disabled = true;
-    btnText.style.display = 'none';
-    btnLoading.style.display = 'inline';
-    
-    try {
-        const response = await fetch('/api/config', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(configData)
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showMessage('配置保存成功！', 'success');
-            // 更新显示（脱敏）
-            if (provider === 'dashscope' && apiKey) {
-                const apiKeyInput = document.getElementById('DASHSCOPE_API_KEY');
-                apiKeyInput.value = apiKey.substring(0, 10) + '...';
-            }
-            // OSS Secret 脱敏
-            if (ossEnabled && configData.OSS_ACCESS_KEY_SECRET) {
-                document.getElementById('OSS_ACCESS_KEY_SECRET').value = '***已保存***';
-            }
-        } else {
-            showMessage('保存失败: ' + (data.error || '未知错误'), 'error');
+    return payload;
+}
+
+document.getElementById('ASR_PROVIDER').addEventListener('change', toggleProviderSettings);
+document.getElementById('OSS_ENABLE_FALLBACK').addEventListener('change', toggleOSSSettings);
+document.getElementById('reloadConfigBtn').addEventListener('click', loadConfig);
+document.getElementById('apiTokenForm').addEventListener('api-token-updated', loadConfig);
+document.addEventListener('DOMContentLoaded', loadConfig);
+
+document.getElementById('configForm').addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const payload = configPayload();
+    const ossEnabled = payload.OSS_ENABLE_FALLBACK;
+    const hasDashscopeKey = Boolean(payload.DASHSCOPE_API_KEY) || Boolean(loadedConfig && loadedConfig.DASHSCOPE_API_KEY_CONFIGURED);
+    if (payload.ASR_PROVIDER === 'dashscope' && !hasDashscopeKey) {
+        showConfigError('请填写 DashScope API Key。');
+        document.getElementById('DASHSCOPE_API_KEY').focus();
+        return;
+    }
+    if (ossEnabled) {
+        const hasId = Boolean(payload.OSS_ACCESS_KEY_ID) || Boolean(loadedConfig && loadedConfig.OSS_ACCESS_KEY_ID_CONFIGURED);
+        const hasSecret = Boolean(payload.OSS_ACCESS_KEY_SECRET) || Boolean(loadedConfig && loadedConfig.OSS_ACCESS_KEY_SECRET_CONFIGURED);
+        if (!hasId || !hasSecret || !payload.OSS_BUCKET_NAME || !payload.OSS_ENDPOINT) {
+            showConfigError('启用 OSS 兜底方案时，需要填写完整的 OSS 配置。');
+            return;
         }
+    }
+
+    const saveButton = document.getElementById('saveBtn');
+    saveButton.disabled = true;
+    saveButton.querySelector('.btn-text').style.display = 'none';
+    saveButton.querySelector('.btn-loading').style.display = 'inline';
+    try {
+        await window.apiFetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        showMessage('配置保存成功。');
+        await loadConfig();
     } catch (error) {
-        showMessage('网络错误: ' + error.message, 'error');
+        if (error.status === 401) {
+            showConfigError('认证失败（401）：令牌无效或已过期，请更新页面顶部的 API 令牌。');
+        } else {
+            showConfigError(`保存失败：${error.message}`);
+        }
     } finally {
-        saveBtn.disabled = false;
-        btnText.style.display = 'inline';
-        btnLoading.style.display = 'none';
+        saveButton.disabled = false;
+        saveButton.querySelector('.btn-text').style.display = 'inline';
+        saveButton.querySelector('.btn-loading').style.display = 'none';
     }
 });
-
-function showMessage(message, type) {
-    const messageEl = document.getElementById('saveMessage');
-    messageEl.textContent = message;
-    messageEl.className = `message message-${type}`;
-    messageEl.style.display = 'block';
-    
-    // 3秒后自动隐藏
-    setTimeout(() => {
-        messageEl.style.display = 'none';
-    }, 3000);
-}
 </script>
 {% endblock %}

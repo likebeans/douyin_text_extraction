@@ -1,521 +1,471 @@
 #!/usr/bin/env python3
-"""抖音视频文本提取工具 - Web 应用"""
+"""抖音视频文本提取工具的 Flask Web 应用。"""
+from __future__ import annotations
+
+import hmac
+import ipaddress
+import logging
 import os
-import json
-import socket
+import tempfile
 from pathlib import Path
-from typing import Optional, Dict, Any
+from threading import BoundedSemaphore, Lock
+from typing import Any
+from urllib.parse import urlsplit
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-from dotenv import load_dotenv, set_key, dotenv_values
+from dotenv import dotenv_values, set_key
+from flask import Flask, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
-# 尝试导入 CORS（可选）
-try:
-    from flask_cors import CORS
-    CORS_AVAILABLE = True
-except ImportError:
-    CORS_AVAILABLE = False
+from config import Settings
 
-from src.parser import DouyinLinkParser
-from src.fetcher import DouyinFetcher
-from src.asr_client import ASRClient
-from src.local_asr_client import LocalASRClient
-from config import Settings, ASR_PROVIDER_DASHSCOPE, ASR_PROVIDER_LOCAL
-
-# 加载环境变量
-load_dotenv()
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
-# 启用 CORS，允许跨域访问（用于外网访问）
-if CORS_AVAILABLE:
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
-else:
-    print("⚠️  flask-cors 未安装，CORS 支持已禁用。如需跨域访问，请安装: uv add flask-cors")
-
-# 全局实例
-parser = DouyinLinkParser()
-fetcher = DouyinFetcher()
-# 配置实例会在每次请求时重新加载
-settings = Settings()
-
-# 确保输出目录存在
-output_dir = Path("./output")
-output_dir.mkdir(exist_ok=True)
-
-# .env 文件路径
+# Relative to the process working directory so deployments and tests can select their own .env.
 ENV_FILE = Path(".env")
+CONFIG_FIELDS = {
+    "ASR_PROVIDER": "asr_provider",
+    "DASHSCOPE_API_KEY": "dashscope_api_key",
+    "MAX_VIDEO_DURATION": "max_video_duration",
+    "ASR_MODEL": "asr_model",
+    "OUTPUT_DIR": "output_dir",
+    "OSS_ENABLE_FALLBACK": "oss_enable_fallback",
+    "OSS_ACCESS_KEY_ID": "oss_access_key_id",
+    "OSS_ACCESS_KEY_SECRET": "oss_access_key_secret",
+    "OSS_BUCKET_NAME": "oss_bucket_name",
+    "OSS_ENDPOINT": "oss_endpoint",
+}
+SECRET_FIELDS = {"DASHSCOPE_API_KEY", "OSS_ACCESS_KEY_ID", "OSS_ACCESS_KEY_SECRET"}
+ENV_NAMES = {field: field for field in CONFIG_FIELDS}
+ASR_MODELS = {"paraformer-v2"}
+_env_write_lock = Lock()
+
+from src.service import ExtractionError, ExtractionService
+
+_extraction_slots = None
+_slots_lock = Lock()
 
 
-def get_env_config() -> Dict[str, str]:
-    """获取当前 .env 配置"""
-    if ENV_FILE.exists():
-        return dotenv_values(ENV_FILE)
-    return {}
+def load_settings() -> Settings:
+    """Read current settings without mutating process environment."""
+    return Settings(_env_file=ENV_FILE)
 
 
-def save_env_config(config: Dict[str, str]) -> bool:
-    """保存配置到 .env 文件"""
+def extraction_slots(settings: Settings):
+    global _extraction_slots
+    with _slots_lock:
+        if _extraction_slots is None:
+            _extraction_slots = BoundedSemaphore(settings.web_max_concurrent_extractions)
+        return _extraction_slots
+
+
+def get_env_config() -> dict[str, str | None]:
+    """Read .env without interpolation or modifying the process environment."""
+    if not ENV_FILE.exists():
+        return {}
+    return dotenv_values(ENV_FILE, encoding="utf-8", interpolate=False)
+
+
+def save_env_config(values: dict[str, str]) -> bool:
+    """Atomically update known .env keys while preserving comments and unrelated lines."""
+    temporary_path: Path | None = None
     try:
-        # 读取现有配置
-        env_values = get_env_config()
-        # 更新配置
-        env_values.update(config)
-        # 写入文件
-        with open(ENV_FILE, 'w', encoding='utf-8') as f:
-            for key, value in env_values.items():
-                if value:
-                    f.write(f"{key}={value}\n")
-        # 重新加载配置
-        load_dotenv(ENV_FILE, override=True)
+        if any(key not in CONFIG_FIELDS or any(char in value for char in "\r\n\x00") for key, value in values.items()):
+            return False
+        with _env_write_lock:
+            ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(prefix=f".{ENV_FILE.name}.", suffix=".tmp", dir=ENV_FILE.parent)
+            temporary_path = Path(temp_name)
+            with os.fdopen(fd, "w", encoding="utf-8") as target:
+                if ENV_FILE.exists():
+                    target.write(ENV_FILE.read_text(encoding="utf-8"))
+                target.flush()
+                os.fsync(target.fileno())
+            os.chmod(temporary_path, 0o600)
+
+            for key, value in values.items():
+                set_key(temporary_path, key, value, quote_mode="always", export=False)
+
+            with temporary_path.open("rb") as updated_file:
+                os.fsync(updated_file.fileno())
+            os.replace(temporary_path, ENV_FILE)
+            temporary_path = None
+            try:
+                directory_fd = os.open(ENV_FILE.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                pass
         return True
-    except Exception as e:
-        print(f"保存配置失败: {e}")
+    except (OSError, UnicodeError, ValueError):
+        return False
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _host_is_loopback(host_header: str | None) -> bool:
+    if not host_header:
+        return False
+    try:
+        hostname = urlsplit(f"//{host_header}").hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    if hostname.lower().rstrip(".") == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
         return False
 
 
-@app.route('/')
-def index():
-    """主页"""
-    return render_template('index.html')
-
-
-@app.route('/config')
-def config_page():
-    """配置页面"""
-    # 重新加载配置以确保显示最新值
-    load_dotenv(ENV_FILE, override=True)
-    current_settings = Settings()
-    
-    env_config = get_env_config()
-    # 获取当前配置的默认值
-    config = {
-        'ASR_PROVIDER': env_config.get('ASR_PROVIDER', current_settings.asr_provider),
-        'DASHSCOPE_API_KEY': env_config.get('DASHSCOPE_API_KEY', current_settings.dashscope_api_key),
-        'MAX_VIDEO_DURATION': env_config.get('MAX_VIDEO_DURATION', str(current_settings.max_video_duration)),
-        'ASR_MODEL': env_config.get('ASR_MODEL', current_settings.asr_model),
-        'OUTPUT_DIR': env_config.get('OUTPUT_DIR', str(current_settings.output_dir)),
-        'OSS_ENABLE_FALLBACK': env_config.get('OSS_ENABLE_FALLBACK', str(current_settings.oss_enable_fallback).lower()),
-        'OSS_ACCESS_KEY_ID': env_config.get('OSS_ACCESS_KEY_ID', current_settings.oss_access_key_id),
-        'OSS_ACCESS_KEY_SECRET': env_config.get('OSS_ACCESS_KEY_SECRET', current_settings.oss_access_key_secret),
-        'OSS_BUCKET_NAME': env_config.get('OSS_BUCKET_NAME', current_settings.oss_bucket_name),
-        'OSS_ENDPOINT': env_config.get('OSS_ENDPOINT', current_settings.oss_endpoint),
-    }
-    # 隐藏 API Key 的显示（只显示前几位）
-    api_key = config['DASHSCOPE_API_KEY']
-    if api_key and len(api_key) > 10:
-        masked_key = api_key[:10] + "..."
-    else:
-        masked_key = api_key if api_key else ""
-    
-    # 隐藏 OSS Secret
-    oss_secret = config['OSS_ACCESS_KEY_SECRET']
-    if oss_secret and len(oss_secret) > 10:
-        config['OSS_ACCESS_KEY_SECRET_MASKED'] = oss_secret[:10] + "..."
-    else:
-        config['OSS_ACCESS_KEY_SECRET_MASKED'] = oss_secret if oss_secret else ""
-    
-    return render_template('config.html', config=config, masked_key=masked_key)
-
-
-@app.route('/api/config', methods=['GET'])
-def get_config():
-    """获取配置 API"""
-    # 重新加载配置
-    load_dotenv(ENV_FILE, override=True)
-    current_settings = Settings()
-    
-    env_config = get_env_config()
-    config = {
-        'ASR_PROVIDER': env_config.get('ASR_PROVIDER', current_settings.asr_provider),
-        'DASHSCOPE_API_KEY': env_config.get('DASHSCOPE_API_KEY', ''),
-        'MAX_VIDEO_DURATION': env_config.get('MAX_VIDEO_DURATION', str(current_settings.max_video_duration)),
-        'ASR_MODEL': env_config.get('ASR_MODEL', current_settings.asr_model),
-        'OUTPUT_DIR': env_config.get('OUTPUT_DIR', str(current_settings.output_dir)),
-        'OSS_ENABLE_FALLBACK': env_config.get('OSS_ENABLE_FALLBACK', str(current_settings.oss_enable_fallback).lower()),
-        'OSS_ACCESS_KEY_ID': env_config.get('OSS_ACCESS_KEY_ID', current_settings.oss_access_key_id),
-        'OSS_ACCESS_KEY_SECRET': env_config.get('OSS_ACCESS_KEY_SECRET', current_settings.oss_access_key_secret),
-        'OSS_BUCKET_NAME': env_config.get('OSS_BUCKET_NAME', current_settings.oss_bucket_name),
-        'OSS_ENDPOINT': env_config.get('OSS_ENDPOINT', current_settings.oss_endpoint),
-    }
-    # 隐藏敏感信息
-    api_key = config['DASHSCOPE_API_KEY']
-    if api_key and len(api_key) > 10:
-        config['DASHSCOPE_API_KEY'] = api_key[:10] + "..."
-    else:
-        config['DASHSCOPE_API_KEY'] = api_key if api_key else ""
-    
-    oss_secret = config['OSS_ACCESS_KEY_SECRET']
-    if oss_secret and len(oss_secret) > 10:
-        config['OSS_ACCESS_KEY_SECRET'] = oss_secret[:10] + "..."
-    else:
-        config['OSS_ACCESS_KEY_SECRET'] = oss_secret if oss_secret else ""
-    
-    return jsonify({
-        'success': True,
-        'config': config
-    })
-
-
-@app.route('/api/config', methods=['POST'])
-def save_config():
-    """保存配置 API"""
-    data = request.get_json()
-    
-    # 重新加载当前配置以获取默认值
-    load_dotenv(ENV_FILE, override=True)
-    current_settings = Settings()
-    
-    # 获取 ASR 提供商
-    asr_provider = data.get('ASR_PROVIDER', current_settings.asr_provider).strip()
-    
-    # 验证必填字段：如果使用 DashScope，需要 API Key
-    if asr_provider == 'dashscope':
-        if 'DASHSCOPE_API_KEY' not in data or not data['DASHSCOPE_API_KEY'].strip():
-            return jsonify({
-                'success': False,
-                'error': '使用 DashScope 时，DASHSCOPE_API_KEY 是必填项'
-            }), 400
-    
-    # 验证 OSS 配置（如果启用）
-    oss_enable = data.get('OSS_ENABLE_FALLBACK', 'false').strip().lower() == 'true'
-    if oss_enable:
-        required_oss_fields = ['OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET', 'OSS_BUCKET_NAME', 'OSS_ENDPOINT']
-        for field in required_oss_fields:
-            if not data.get(field) or not data.get(field).strip():
-                return jsonify({
-                    'success': False,
-                    'error': f'启用 OSS 兜底方案时，{field} 是必填项'
-                }), 400
-    
-    # 准备要保存的配置
-    config_to_save = {
-        'ASR_PROVIDER': asr_provider,
-        'MAX_VIDEO_DURATION': data.get('MAX_VIDEO_DURATION', str(current_settings.max_video_duration)).strip(),
-        'ASR_MODEL': data.get('ASR_MODEL', current_settings.asr_model).strip(),
-        'OSS_ENABLE_FALLBACK': 'true' if oss_enable else 'false',
-    }
-    
-    # DashScope 配置（如果使用）
-    if asr_provider == 'dashscope' and data.get('DASHSCOPE_API_KEY'):
-        dashscope_key = data['DASHSCOPE_API_KEY'].strip()
-        # 如果是脱敏的值（包含...），需要从现有配置中获取完整值
-        if not dashscope_key or dashscope_key.endswith('...'):
-            # 尝试从现有配置中获取
-            env_config = get_env_config()
-            existing_key = env_config.get('DASHSCOPE_API_KEY', '')
-            if existing_key and not existing_key.endswith('...'):
-                config_to_save['DASHSCOPE_API_KEY'] = existing_key
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': '请输入完整的 DashScope API Key'
-                }), 400
-        else:
-            config_to_save['DASHSCOPE_API_KEY'] = dashscope_key
-    elif asr_provider == 'local':
-        # 本地模式，清空 DashScope API Key（可选）
-        config_to_save['DASHSCOPE_API_KEY'] = ''
-    
-    # OSS 配置（如果启用）
-    if oss_enable:
-        # 检查 OSS Secret 是否被修改（不是脱敏的值）
-        oss_secret = data.get('OSS_ACCESS_KEY_SECRET', '').strip()
-        if oss_secret and oss_secret not in ['***已保存***', '...', '']:
-            # 是新的完整值
-            config_to_save['OSS_ACCESS_KEY_SECRET'] = oss_secret
-        elif oss_secret in ['***已保存***', '...']:
-            # 是脱敏的值，保留现有配置
-            env_config = get_env_config()
-            existing_secret = env_config.get('OSS_ACCESS_KEY_SECRET', '')
-            if existing_secret and not existing_secret.endswith('...'):
-                config_to_save['OSS_ACCESS_KEY_SECRET'] = existing_secret
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': '请输入完整的 OSS AccessKey Secret'
-                }), 400
-        
-        config_to_save['OSS_ACCESS_KEY_ID'] = data.get('OSS_ACCESS_KEY_ID', '').strip()
-        config_to_save['OSS_BUCKET_NAME'] = data.get('OSS_BUCKET_NAME', '').strip()
-        config_to_save['OSS_ENDPOINT'] = data.get('OSS_ENDPOINT', '').strip()
-    else:
-        # 未启用 OSS，清空相关配置
-        config_to_save['OSS_ACCESS_KEY_ID'] = ''
-        config_to_save['OSS_ACCESS_KEY_SECRET'] = ''
-        config_to_save['OSS_BUCKET_NAME'] = ''
-        config_to_save['OSS_ENDPOINT'] = ''
-    
-    # 可选配置
-    if data.get('OUTPUT_DIR'):
-        config_to_save['OUTPUT_DIR'] = data['OUTPUT_DIR'].strip()
-    
-    # 保存配置
-    if save_env_config(config_to_save):
-        return jsonify({
-            'success': True,
-            'message': '配置保存成功'
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'error': '配置保存失败'
-        }), 500
-
-
-@app.route('/api/health', methods=['GET'])
-def health():
-    """Health check for container/orchestrator probes."""
-    return jsonify({'ok': True})
-
-
-@app.route('/api/extract', methods=['POST'])
-def extract_video():
-    """提取视频文本 API"""
-    data = request.get_json()
-    link = data.get('link', '').strip()
-    
-    if not link:
-        return jsonify({
-            'success': False,
-            'error': '请提供抖音链接'
-        }), 400
-    
-    # 重新加载配置以确保使用最新设置
-    load_dotenv(ENV_FILE, override=True)
-    current_settings = Settings()
-    
-    # 检查配置
-    if not current_settings.validate_config():
-        error_msg = '配置错误: '
-        if current_settings.asr_provider == ASR_PROVIDER_DASHSCOPE:
-            error_msg += '未设置 DASHSCOPE_API_KEY，请先到配置页面设置'
-        elif current_settings.asr_provider == ASR_PROVIDER_LOCAL:
-            error_msg += 'Local Whisper 不可用，请检查是否已安装 Whisper'
-        else:
-            error_msg += f'未知的 ASR 提供商: {current_settings.asr_provider}'
-        
-        return jsonify({
-            'success': False,
-            'error': error_msg
-        }), 400
-    
+def _peer_is_loopback(address: str | None) -> bool:
+    if not address:
+        return False
     try:
-        # 1. 解析链接
-        video_id = parser.parse(link)
-        if not video_id:
-            return jsonify({
-                'success': False,
-                'error': '链接解析失败，请检查链接是否正确'
-            }), 400
-        
-        # 2. 获取视频元数据
-        metadata = fetcher.fetch(video_id)
-        if not metadata:
-            return jsonify({
-                'success': False,
-                'error': '视频信息获取失败，请检查链接是否有效'
-            }), 400
-        
-        # 检查视频时长限制
-        if metadata.duration > current_settings.max_video_duration:
-            return jsonify({
-                'success': False,
-                'error': f'视频时长 ({metadata.duration}秒) 超过限制 ({current_settings.max_video_duration}秒)'
-            }), 400
-        
-        # 3. 语音识别（根据配置选择提供商）
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
+
+
+def _origin_is_same_origin(origin: str) -> bool:
+    try:
+        parsed = urlsplit(origin)
+        if parsed.username or parsed.password or not parsed.scheme or not parsed.hostname:
+            return False
+        request_host = urlsplit(f"//{request.host}")
+        host = parsed.hostname.lower().rstrip(".")
+        expected_host = (request_host.hostname or "").lower().rstrip(".")
+        if parsed.scheme.lower() != request.scheme.lower() or host != expected_host:
+            return False
+        origin_port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        request_port = request_host.port or (443 if request.scheme.lower() == "https" else 80)
+        return origin_port == request_port and parsed.path in ("", "/") and not parsed.query and not parsed.fragment
+    except ValueError:
+        return False
+
+
+def _api_error(message: str, status: int):
+    response = jsonify({"success": False, "error": message})
+    if status == 401:
+        response.headers["WWW-Authenticate"] = 'Bearer realm="douyin-api"'
+    return response, status
+
+
+@app.before_request
+def protect_api_routes():
+    if not request.path.startswith("/api/") or request.path == "/api/health":
+        return None
+
+    # Browser requests must be same-origin. Clients without Origin remain supported.
+    fetch_site = request.headers.get("Sec-Fetch-Site", "").lower()
+    if fetch_site and fetch_site != "same-origin":
+        return _api_error("跨站请求不允许", 403)
+    origin = request.headers.get("Origin")
+    try:
+        settings = load_settings()
+    except Exception:
+        return _api_error("服务配置无效", 500)
+    public_origin_matches = (
+        bool(settings.web_api_token)
+        and bool(settings.web_public_origin)
+        and origin == settings.web_public_origin
+    )
+    if origin and not (_origin_is_same_origin(origin) or public_origin_matches):
+        return _api_error("跨站请求不允许", 403)
+
+    if settings.web_api_token:
+        provided = request.headers.get("X-API-Token", "")
+        authorization = request.headers.get("Authorization", "")
+        if authorization.lower().startswith("bearer "):
+            bearer = authorization[7:].strip()
+            if not provided:
+                provided = bearer
         try:
-            if current_settings.asr_provider == ASR_PROVIDER_DASHSCOPE:
-                # 使用 DashScope（云端）
-                asr_client = ASRClient(current_settings.dashscope_api_key, current_settings.asr_model)
-                text = asr_client.transcribe(video_url=metadata.video_url)
-            elif current_settings.asr_provider == ASR_PROVIDER_LOCAL:
-                # 使用 Local Whisper（本地）
-                # 需要先下载视频并提取音频
-                import tempfile
-                from src.audio_processor import AudioProcessor
-                
-                # 检查 FFmpeg 是否安装
-                audio_processor = AudioProcessor(
-                    temp_dir=current_settings.temp_dir,
-                    cleanup=False  # 手动清理
-                )
-                
-                if not audio_processor.check_ffmpeg():
-                    return jsonify({
-                        'success': False,
-                        'error': 'FFmpeg 未安装，无法提取音频。请先安装 FFmpeg 或使用 DashScope 云端服务'
-                    }), 400
-                
-                # 创建临时文件路径
-                video_path = current_settings.temp_dir / f"temp_video_{video_id}.mp4"
-                audio_path = current_settings.temp_dir / f"temp_audio_{video_id}.wav"
-                
-                # 确保临时目录存在
-                current_settings.temp_dir.mkdir(parents=True, exist_ok=True)
-                
-                # 下载视频文件
-                downloaded_path = audio_processor.download_video(
-                    video_url=metadata.video_url,
-                    save_path=video_path
-                )
-                
-                if not downloaded_path or not downloaded_path.exists():
-                    return jsonify({
-                        'success': False,
-                        'error': '视频下载失败，请检查视频 URL 是否有效'
-                    }), 500
-                
-                # 提取音频
-                extracted_audio = audio_processor.extract_audio(
-                    video_source=downloaded_path,
-                    output_path=audio_path
-                )
-                
-                if not extracted_audio or not extracted_audio.exists():
-                    # 清理视频文件
-                    if downloaded_path.exists():
-                        try:
-                            downloaded_path.unlink()
-                        except Exception:
-                            pass
-                    return jsonify({
-                        'success': False,
-                        'error': '音频提取失败，请检查 FFmpeg 是否正确安装'
-                    }), 500
-                
-                # 使用 Local Whisper 转写
-                local_asr = LocalASRClient()
-                text = local_asr.transcribe(audio_path=extracted_audio)
-                
-                # 清理临时文件
-                if current_settings.cleanup_temp_files:
-                    for temp_file in [downloaded_path, extracted_audio]:
-                        if temp_file and temp_file.exists():
-                            try:
-                                temp_file.unlink()
-                            except Exception:
-                                pass
+            authorized = bool(provided) and hmac.compare_digest(
+                provided.encode("utf-8"), settings.web_api_token.encode("utf-8")
+            )
+        except UnicodeEncodeError:
+            authorized = False
+        if not authorized:
+            return _api_error("需要有效的 API 令牌", 401)
+        return None
+
+    # No token is an intentional local-only mode. Proxy headers are not trusted.
+    if not (_peer_is_loopback(request.remote_addr) and _host_is_loopback(request.host)):
+        return _api_error("未配置 API 令牌时仅允许本机访问", 403)
+    return None
+
+
+@app.errorhandler(HTTPException)
+def handle_http_error(error: HTTPException):
+    if request.path.startswith("/api/"):
+        message = "请求体过大" if isinstance(error, RequestEntityTooLarge) else error.description
+        return _api_error(message, error.code or 500)
+    return error
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(error: Exception):
+    if isinstance(error, HTTPException):
+        return handle_http_error(error)
+    logger.error("Unhandled web request failure (%s)", type(error).__name__)
+    if request.path.startswith("/api/"):
+        return _api_error("服务器内部错误", 500)
+    return "服务器内部错误", 500
+
+
+def _json_object() -> dict[str, Any] | tuple[Any, int]:
+    content_length = request.content_length
+    if content_length is not None and content_length > app.config["MAX_CONTENT_LENGTH"]:
+        return _api_error("请求体过大", 413)
+    if not request.is_json:
+        return _api_error("请求必须使用 JSON 格式", 415)
+    try:
+        data = request.get_json()
+    except RequestEntityTooLarge:
+        raise
+    except (ValueError, HTTPException):
+        return _api_error("JSON 格式无效", 400)
+    if not isinstance(data, dict):
+        return _api_error("JSON 请求体必须是对象", 400)
+    return data
+
+
+def _configured_fields(settings: Settings) -> dict[str, Any]:
+    return {
+        "ASR_PROVIDER": settings.asr_provider,
+        "DASHSCOPE_API_KEY": "",
+        "DASHSCOPE_API_KEY_CONFIGURED": bool(settings.dashscope_api_key),
+        "MAX_VIDEO_DURATION": str(settings.max_video_duration),
+        "ASR_MODEL": settings.asr_model,
+        "OUTPUT_DIR": str(settings.output_dir),
+        "OSS_ENABLE_FALLBACK": str(settings.oss_enable_fallback).lower(),
+        "OSS_ACCESS_KEY_ID_CONFIGURED": bool(settings.oss_access_key_id),
+        "OSS_ACCESS_KEY_SECRET": "",
+        "OSS_ACCESS_KEY_SECRET_CONFIGURED": bool(settings.oss_access_key_secret),
+        "OSS_BUCKET_NAME": settings.oss_bucket_name,
+        "OSS_ENDPOINT": settings.oss_endpoint,
+        "ENVIRONMENT_FIELDS": [
+            key for key in CONFIG_FIELDS
+            if ENV_NAMES[key].lower() in {name.lower() for name in os.environ}
+        ],
+    }
+
+
+def _parse_text_field(data: dict[str, Any], key: str, *, max_length: int = 4096) -> str:
+    value = data[key]
+    if not isinstance(value, str):
+        raise ValueError(f"{key} 必须是字符串")
+    value = value.strip()
+    if len(value) > max_length or any(char in value for char in "\r\n\x00"):
+        raise ValueError(f"{key} 格式无效")
+    return value
+
+
+def _parse_config_update(data: dict[str, Any], current: Settings) -> dict[str, str]:
+    unknown = set(data) - CONFIG_FIELDS.keys()
+    if unknown:
+        raise ValueError("包含不支持的配置项")
+
+    updates: dict[str, str] = {}
+    normalized: dict[str, Any] = {}
+    for key in data:
+        if key == "ASR_PROVIDER":
+            value = _parse_text_field(data, key, max_length=32)
+            if value not in {"dashscope", "local"}:
+                raise ValueError("ASR 提供商无效")
+            normalized[key] = value
+        elif key == "ASR_MODEL":
+            value = _parse_text_field(data, key, max_length=64)
+            if value not in ASR_MODELS:
+                raise ValueError("仅支持 paraformer-v2 文件识别模型")
+            normalized[key] = value
+        elif key == "MAX_VIDEO_DURATION":
+            value = data[key]
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                raise ValueError("MAX_VIDEO_DURATION 必须是 1 到 3600 的整数")
+            try:
+                duration = int(value)
+            except (TypeError, ValueError):
+                raise ValueError("MAX_VIDEO_DURATION 必须是 1 到 3600 的整数") from None
+            if str(value).strip() != str(duration) or not 1 <= duration <= 3600:
+                raise ValueError("MAX_VIDEO_DURATION 必须是 1 到 3600 的整数")
+            normalized[key] = duration
+        elif key == "OSS_ENABLE_FALLBACK":
+            value = data[key]
+            if isinstance(value, bool):
+                normalized[key] = value
+            elif isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+                normalized[key] = value.strip().lower() == "true"
             else:
-                return jsonify({
-                    'success': False,
-                    'error': f'未知的 ASR 提供商: {current_settings.asr_provider}'
-                }), 400
-            
-            if not text:
-                error_msg = '语音识别失败'
-                if current_settings.asr_provider == ASR_PROVIDER_DASHSCOPE:
-                    error_msg += '，请检查 API Key 是否有效'
-                elif current_settings.asr_provider == ASR_PROVIDER_LOCAL:
-                    error_msg += '，请检查 Whisper 是否正常工作'
-                return jsonify({
-                    'success': False,
-                    'error': error_msg
-                }), 500
-        except ImportError as e:
-            return jsonify({
-                'success': False,
-                'error': f'ASR 模块导入失败: {str(e)}'
-            }), 500
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'error': f'语音识别过程出错: {str(e)}'
-            }), 500
-        
-        # 4. 返回结果
-        result = {
-            'success': True,
-            'metadata': {
-                'video_id': metadata.video_id,
-                'title': metadata.title,
-                'author': metadata.author,
-                'duration': metadata.duration,
-                'video_url': metadata.video_url,
-                'cover_url': metadata.cover_url,
-                'douyin_url': f"https://www.douyin.com/video/{metadata.video_id}"
-            },
-            'text': text
-        }
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': f'处理失败: {str(e)}'
-        }), 500
+                raise ValueError("OSS_ENABLE_FALLBACK 必须是布尔值")
+        else:
+            limit = 1024 if key == "OUTPUT_DIR" else 4096
+            normalized[key] = _parse_text_field(data, key, max_length=limit)
+
+    current_values: dict[str, Any] = {
+        "ASR_PROVIDER": current.asr_provider,
+        "DASHSCOPE_API_KEY": current.dashscope_api_key,
+        "MAX_VIDEO_DURATION": current.max_video_duration,
+        "ASR_MODEL": current.asr_model,
+        "OUTPUT_DIR": str(current.output_dir),
+        "OSS_ENABLE_FALLBACK": current.oss_enable_fallback,
+        "OSS_ACCESS_KEY_ID": current.oss_access_key_id,
+        "OSS_ACCESS_KEY_SECRET": current.oss_access_key_secret,
+        "OSS_BUCKET_NAME": current.oss_bucket_name,
+        "OSS_ENDPOINT": current.oss_endpoint,
+    }
+
+    effective_values = current_values.copy()
+    # Empty ordinary fields from the UI mean “leave as is” too; there is no clear action for secrets.
+    for key, value in normalized.items():
+        if key != "OUTPUT_DIR" and key not in SECRET_FIELDS and isinstance(value, str) and not value:
+            normalized[key] = current_values[key]
+    environment_names = {name.upper() for name in os.environ}
+    for key, value in normalized.items():
+        # Empty secret inputs mean “keep the existing value”, independent of provider toggles.
+        if key in SECRET_FIELDS and not value:
+            continue
+        if ENV_NAMES[key].upper() in environment_names and value != current_values[key]:
+            raise ValueError(f"{key} 已由环境变量设置，不能通过页面修改")
+        effective_values[key] = value
+        if value != current_values[key]:
+            updates[key] = str(value).lower() if isinstance(value, bool) else str(value)
+
+    provider = effective_values["ASR_PROVIDER"]
+    if provider == "dashscope" and not effective_values["DASHSCOPE_API_KEY"]:
+        raise ValueError("使用 DashScope 时必须先配置 API Key")
+    if effective_values["OSS_ENABLE_FALLBACK"]:
+        if not all(effective_values[field] for field in (
+            "OSS_ACCESS_KEY_ID", "OSS_ACCESS_KEY_SECRET", "OSS_BUCKET_NAME", "OSS_ENDPOINT"
+        )):
+            raise ValueError("启用 OSS 兜底方案时需要填写完整的 OSS 配置")
+
+    # Validate the complete candidate through Settings before writing it.
+    candidate = current.model_dump()
+    for key, value in effective_values.items():
+        candidate[CONFIG_FIELDS[key]] = value
+    candidate_settings = Settings(_env_file=None, **candidate)
+    if candidate_settings.asr_provider == "dashscope" and not candidate_settings.validate_config():
+        raise ValueError("使用 DashScope 时必须先配置 API Key")
+    if not candidate_settings.validate_oss_config():
+        raise ValueError("启用 OSS 兜底方案时需要填写完整的 OSS 配置")
+    return updates
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/config")
+def config_page():
+    # Runtime configuration is fetched only through the authenticated API.
+    return render_template("config.html")
+
+
+@app.route("/api/config", methods=["GET"])
+def get_config():
+    try:
+        settings = load_settings()
+    except Exception:
+        return _api_error("服务配置无效", 500)
+    if not settings.web_config_enabled:
+        return _api_error("配置页面已禁用", 404)
+    return jsonify({"success": True, "config": _configured_fields(settings)})
+
+
+@app.route("/api/config", methods=["POST"])
+def save_config():
+    try:
+        current = load_settings()
+    except Exception:
+        return _api_error("服务配置无效", 500)
+    if not current.web_config_enabled:
+        return _api_error("配置页面已禁用", 404)
+
+    parsed = _json_object()
+    if isinstance(parsed, tuple):
+        return parsed
+    try:
+        updates = _parse_config_update(parsed, current)
+    except ValueError as error:
+        return _api_error(str(error), 400)
+
+    if not updates:
+        return jsonify({"success": True, "message": "配置未发生变化"})
+    if not save_env_config(updates):
+        return _api_error("配置保存失败", 500)
+    return jsonify({"success": True, "message": "配置保存成功"})
+
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    return jsonify({"ok": True})
+
+
+@app.route("/api/extract", methods=["POST"])
+def extract_video():
+    parsed = _json_object()
+    if isinstance(parsed, tuple):
+        return parsed
+    link = parsed.get("link")
+    if not isinstance(link, str) or not link.strip() or len(link) > 8192 or "\x00" in link:
+        return _api_error("请提供有效的抖音链接", 400)
+
+    try:
+        current_settings = load_settings()
+    except Exception:
+        return _api_error("服务配置无效", 500)
+    if not current_settings.validate_config():
+        return _api_error("ASR 配置无效，请检查配置页面", 400)
+    slots = extraction_slots(current_settings)
+    if not slots.acquire(blocking=False):
+        return _api_error("当前提取任务较多，请稍后重试", 429)
+
+    try:
+        result = ExtractionService(current_settings).extract(link.strip())
+        return jsonify(result.to_dict())
+    except ExtractionError as error:
+        status = getattr(error, "status_code", 400)
+        if not isinstance(status, int) or not 400 <= status <= 599:
+            status = 400
+        message = str(error).strip()
+        if not message or len(message) > 500:
+            message = "视频文本提取失败"
+        return _api_error(message, status)
+    except Exception as error:
+        logger.error("Unexpected extraction failure (%s)", type(error).__name__)
+        return _api_error("服务器内部错误", 500)
+    finally:
+        slots.release()
 
 
 def get_local_ip() -> str:
-    """获取本机局域网 IP 地址（优先返回实际局域网接口）"""
+    """Return a local address for the startup banner when available."""
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # 方法1: 尝试通过连接外部地址获取
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        
-        # 过滤掉虚拟接口和特殊 IP
-        # 198.18.0.0/15 是文档和测试网络，不是实际局域网 IP
-        if ip.startswith("198.18.") or ip.startswith("169.254."):
-            # 如果获取到的是虚拟接口，尝试从系统获取实际 IP
-            import platform
-            if platform.system() == "Windows":
-                try:
-                    import subprocess
-                    result = subprocess.run(
-                        ["powershell", "-Command", 
-                         "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.*' -and $_.IPAddress -notlike '198.18.*' -and $_.InterfaceAlias -notlike '*Loopback*' -and $_.InterfaceAlias -notlike '*WSL*' } | Select-Object -First 1 -ExpandProperty IPAddress"],
-                        capture_output=True,
-                        text=True,
-                        timeout=3
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        ip = result.stdout.strip()
-                except Exception:
-                    pass
-        
-        return ip
-    except Exception:
-        # 方法2: 如果失败，返回 localhost
-        return "localhost"
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
 
 
-if __name__ == '__main__':
-    # 从环境变量获取配置，默认值允许外网访问
-    host = os.getenv('FLASK_HOST', '0.0.0.0')
-    port = int(os.getenv('FLASK_PORT', 5000))
-    debug = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
-    
-    # 获取本机 IP
-    local_ip = get_local_ip()
-    
-    print("=" * 70)
-    print("🎬 抖音视频文本提取工具 - Web 界面")
-    print("=" * 70)
-    print(f"📱 本地访问: http://localhost:{port}")
-    if host == '0.0.0.0':
-        print(f"🌐 局域网访问: http://{local_ip}:{port}")
-        print(f"🌍 外网访问: 需要配置端口转发或使用公网 IP")
-        print(f"")
-        print(f"⚠️  重要提示:")
-        print(f"   - 确保使用正确的 IP 地址: {local_ip}")
-        print(f"   - 如果无法访问，请检查防火墙设置")
-        print(f"   - 运行防火墙脚本: scripts\\open_firewall_port.ps1 {port}")
-    else:
-        print(f"⚠️  仅监听 {host}，可能无法外网访问")
-    print(f"⚙️  调试模式: {'开启' if debug else '关闭'}")
-    print("=" * 70)
-    print("💡 提示: 按 Ctrl+C 停止服务")
-    print("=" * 70)
-    print()
-    
-    # 确保监听所有接口
-    if host != '0.0.0.0':
-        print(f"⚠️  警告: host={host}，建议使用 0.0.0.0 以允许局域网访问")
-        print()
-    
-    app.run(debug=debug, host=host, port=port, threaded=True)
+if __name__ == "__main__":
+    from run_web import main
+
+    main()

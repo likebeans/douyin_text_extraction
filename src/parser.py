@@ -1,337 +1,278 @@
-"""抖音链接解析模块"""
-import re
-import requests
+"""Strict parsing and resolution of Douyin share links."""
+from __future__ import annotations
+
 import json
+import re
 from typing import Optional, Tuple
+from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from rich.console import Console
 
 console = Console()
 
 
 class DouyinLinkParser:
-    """抖音链接解析器"""
-    
-    # 正则表达式模式
-    # 更新：支持连字符 - 在短链接中（如 9cZD_5-RWyI）
-    # Keep the optional trailing slash. Some v.douyin.com short links may fail to resolve without it.
-    SHARE_TEXT_PATTERN = r'(https?://(?:v|www|m)\.douyin\.com/[^\s]+)'
-    VIDEO_ID_PATTERN = r'/video/(\d+)'
-    MODAL_ID_PATTERN = r'/modal/detail/(\d+)'
-    # 支持更多 URL 格式
-    VIDEO_ID_IN_URL_PATTERN = r'(?:/video/|video/|/share/video/)(\d+)'
-    SHARE_URL_PATTERNS = [
-        SHARE_TEXT_PATTERN,
-        r'(https?://www\.iesdouyin\.com/share/video/\d+[^\s]*)',
-        r'(https?://www\.douyin\.com/video/\d+[^\s]*)',
-    ]
-    
-    def __init__(self, timeout: int = 10):
+    """Extract a video ID from a supported Douyin URL or share message."""
+
+    MAX_REDIRECTS = 5
+    ALLOWED_HOSTS = {
+        "douyin.com",
+        "www.douyin.com",
+        "m.douyin.com",
+        "v.douyin.com",
+        "iesdouyin.com",
+        "www.iesdouyin.com",
+    }
+    VIDEO_ID_PATTERN = re.compile(r"/(?:video|note|modal/detail|share/video)/(\d+)(?:/|$)")
+    SHARE_URL_PATTERN = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
+    TRAILING_PUNCTUATION = ").,]}>'\"，。！？；：）》】」』”’"
+
+    def __init__(self, timeout: int = 10, retry_times: int = 3):
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
+        if retry_times < 0:
+            raise ValueError("retry_times cannot be negative")
         self.timeout = timeout
+        self.retry_times = retry_times
         self.session = requests.Session()
-        # 使用更完整的请求头模拟真实浏览器
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate',
-            'Referer': 'https://www.douyin.com/',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
-        })
-    
+        self._closed = False
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Accept-Encoding": "gzip, deflate",
+                "Referer": "https://www.douyin.com/",
+                "Upgrade-Insecure-Requests": "1",
+                "Cache-Control": "max-age=0",
+            }
+        )
+        retry = Retry(
+            total=retry_times,
+            connect=retry_times,
+            read=retry_times,
+            status=retry_times,
+            backoff_factor=0.2,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+            respect_retry_after_header=True,
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+    @classmethod
+    def _validated_url(cls, raw_url: str) -> Optional[str]:
+        try:
+            parts = urlsplit(raw_url.strip())
+            host = parts.hostname
+            port = parts.port
+        except (TypeError, ValueError):
+            return None
+        if parts.scheme.lower() not in {"http", "https"} or not host:
+            return None
+        if parts.username is not None or parts.password is not None:
+            return None
+        if host.lower() not in cls.ALLOWED_HOSTS:
+            return None
+        if port is not None and port != (443 if parts.scheme.lower() == "https" else 80):
+            return None
+        # Normalize host spelling and preserve the rest of the URL as supplied.
+        netloc = host.lower()
+        if port is not None:
+            netloc = f"{netloc}:{port}"
+        return urlunsplit((parts.scheme.lower(), netloc, parts.path or "/", parts.query, parts.fragment))
+
+    @classmethod
+    def _with_short_link_slash(cls, url: str) -> str:
+        parts = urlsplit(url)
+        canonical_route = re.search(r"/(?:video|note|modal/detail|share/video)/\d+/?$", parts.path)
+        if (
+            parts.hostname
+            and parts.hostname.lower() == "v.douyin.com"
+            and parts.path
+            and not parts.path.endswith("/")
+            and not canonical_route
+        ):
+            return urlunsplit((parts.scheme, parts.netloc, parts.path + "/", parts.query, parts.fragment))
+        return url
+
     def extract_short_url(self, text: str) -> Optional[str]:
-        """从分享文本中提取短链接
-        
-        Args:
-            text: 可能包含抖音链接的文本
-            
-        Returns:
-            提取到的短链接，如果没有则返回 None
-        """
-        for pattern in self.SHARE_URL_PATTERNS:
-            match = re.search(pattern, text)
-            if match:
-                url = match.group(1).strip()
-                url = url.rstrip(').,]}>\"\'')
-                if "v.douyin.com" in url and not url.endswith("/"):
-                    url += "/"
-                return url
-        
-        # 检查是否直接是完整链接
-        if 'douyin.com/video/' in text or 'iesdouyin.com/share/video/' in text:
-            match = re.search(r'(https?://[^\s]+)', text)
-            if match:
-                url = match.group(1).strip().rstrip(').,]}>\"\'')
-                return url
-            return text
-        
+        """Return the first well-formed URL on one of the supported hosts."""
+        if not isinstance(text, str):
+            return None
+        for match in self.SHARE_URL_PATTERN.finditer(text):
+            candidate = match.group(0)
+            for separator in "，。；：！？、》】）」』":
+                candidate = candidate.split(separator, 1)[0]
+            candidate = candidate.rstrip(self.TRAILING_PUNCTUATION)
+            url = self._validated_url(candidate)
+            if url:
+                return self._with_short_link_slash(url)
         return None
-    
+
+    def close(self) -> None:
+        """Close the underlying HTTP session and release adapter pools."""
+        if not self._closed:
+            self.session.close()
+            self.session.adapters.clear()
+            self._closed = True
+
+    @staticmethod
+    def _close_response(response) -> None:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
     def resolve_redirect(self, short_url: str) -> Tuple[Optional[str], Optional[str]]:
-        """解析短链接的重定向，返回重定向后的 URL 和 HTML 内容
-        
-        Args:
-            short_url: 抖音短链接
-            
-        Returns:
-            (重定向后的完整 URL, HTML 内容) 的元组
-        """
-        try:
-            # 先禁用自动重定向，手动获取重定向地址
-            response = self.session.get(
-                short_url,
-                allow_redirects=False,
-                timeout=self.timeout
-            )
-            
-            # 如果是 3xx 重定向
-            if response.status_code in (301, 302, 303, 307, 308):
-                redirect_url = response.headers.get('Location')
-                if redirect_url:
-                    # 处理相对路径
-                    if not redirect_url.startswith('http'):
-                        from urllib.parse import urljoin
-                        redirect_url = urljoin(short_url, redirect_url)
-                    
-                    console.print(f"[dim]   重定向到: {redirect_url[:100]}...[/dim]")
-                    
-                    # 检查是否重定向到根域名（说明被反爬了）
-                    if redirect_url.strip('/') in ('https://www.douyin.com', 'http://www.douyin.com'):
-                        console.print(f"[yellow]⚠️  短链接被重定向到根域名，可能是链接失效或被反爬[/yellow]")
-                        console.print(f"[yellow]   尝试直接访问短链接...[/yellow]")
-                        # 尝试允许自动重定向，获取最终页面
-                        response = self.session.get(short_url, allow_redirects=True, timeout=self.timeout)
-                        response.raise_for_status()
-                        
-                        # 再次检查最终 URL
-                        if response.url.strip('/') in ('https://www.douyin.com', 'http://www.douyin.com'):
-                            console.print(f"[red]❌ 短链接已失效或不可用[/red]")
-                            return None, None
-                        
-                        return response.url, response.text
-                    
-                    # 访问重定向后的 URL
-                    response = self.session.get(
-                        redirect_url,
-                        allow_redirects=True,
-                        timeout=self.timeout
-                    )
-                    response.raise_for_status()
-                    return response.url, response.text
-            
-            # 如果不是重定向，直接返回
-            response.raise_for_status()
-            return response.url, response.text
-            
-        except Exception as e:
-            console.print(f"[red]❌ 链接重定向失败: {e}[/red]")
+        """Follow redirects manually, validating every destination before use."""
+        current_url = self._validated_url(short_url)
+        if not current_url:
+            console.print("[red]❌ 拒绝访问非抖音链接[/red]")
             return None, None
-    
+        current_url = self._with_short_link_slash(current_url)
+
+        for redirect_count in range(self.MAX_REDIRECTS + 1):
+            response = None
+            try:
+                response = self.session.get(
+                    current_url,
+                    allow_redirects=False,
+                    timeout=self.timeout,
+                )
+                actual_url = self._validated_url(getattr(response, "url", None) or current_url)
+                if not actual_url:
+                    console.print("[red]❌ 抖音页面返回了非平台地址[/red]")
+                    return None, None
+                status = response.status_code
+                if status in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("Location")
+                    if not location:
+                        return None, None
+                    destination = self._validated_url(urljoin(actual_url, location))
+                    if not destination:
+                        console.print("[red]❌ 拒绝跟随到非抖音域名的重定向[/red]")
+                        return None, None
+                    if redirect_count >= self.MAX_REDIRECTS:
+                        console.print("[red]❌ 重定向次数超过限制[/red]")
+                        return None, None
+                    console.print(f"[dim]   重定向到: {destination[:100]}[/dim]")
+                    current_url = destination
+                    continue
+                if hasattr(response, "raise_for_status"):
+                    response.raise_for_status()
+                elif status >= 400:
+                    return None, None
+                return actual_url, response.text
+            except requests.exceptions.RequestException as exc:
+                console.print(f"[red]❌ 链接重定向失败: {exc}[/red]")
+                return None, None
+            finally:
+                if response is not None:
+                    self._close_response(response)
+        return None, None
+
     def extract_video_id_from_url(self, url: str) -> Optional[str]:
-        """从 URL 中提取视频 ID
-        
-        Args:
-            url: 完整的抖音视频 URL
-            
-        Returns:
-            视频 ID (aweme_id) 或 None
-        """
-        # 尝试多种 URL 格式
-        patterns = [
-            self.VIDEO_ID_PATTERN,  # /video/123456789
-            self.MODAL_ID_PATTERN,  # /modal/detail/123456789
-            self.VIDEO_ID_IN_URL_PATTERN,  # 通用匹配
-            r'video_id["\']?\s*[:=]\s*["\']?(\d+)',  # JSON 中的 video_id
-            r'aweme_id["\']?\s*[:=]\s*["\']?(\d+)',  # JSON 中的 aweme_id
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
-        
+        """Extract an ID from a supported Douyin URL path or query."""
+        validated = self._validated_url(url)
+        if not validated:
+            return None
+        parts = urlsplit(validated)
+        match = self.VIDEO_ID_PATTERN.search(parts.path)
+        if match:
+            return match.group(1)
+        for key in ("modal_id", "aweme_id", "item_id", "vid", "video_id", "id"):
+            for value in parse_qs(parts.query).get(key, []):
+                if value.isdigit():
+                    return value
         return None
-    
+
     def extract_video_id_from_html(self, html: str) -> Optional[str]:
-        """从 HTML 页面中提取视频 ID
-        
-        Args:
-            html: HTML 页面内容
-            
-        Returns:
-            视频 ID (aweme_id) 或 None
-        """
-        try:
-            # 方法1: 从 window._ROUTER_DATA 提取
-            pattern = re.compile(
-                r"window\._ROUTER_DATA\s*=\s*(.*?)</script>",
-                re.DOTALL
-            )
-            match = pattern.search(html)
-            if match:
-                json_str = match.group(1).strip()
-                json_data = json.loads(json_str)
-                
-                # 查找视频 ID 在 loaderData 中（参考 fetcher.py 的实现）
-                loader_data = json_data.get("loaderData", {})
-                
-                # 处理两种内容类型（视频/图文）
-                VIDEO_ID_PAGE_KEY = "video_(id)/page"
-                NOTE_ID_PAGE_KEY = "note_(id)/page"
-                
-                # 首先尝试标准格式
-                if VIDEO_ID_PAGE_KEY in loader_data:
-                    try:
-                        video_info_res = loader_data[VIDEO_ID_PAGE_KEY].get("videoInfoRes", {})
-                        item_list = video_info_res.get("item_list", [])
-                        if item_list and len(item_list) > 0:
-                            aweme_id = item_list[0].get("aweme_id") or item_list[0].get("item_id")
-                            if aweme_id:
-                                return str(aweme_id)
-                    except (KeyError, IndexError, TypeError):
-                        pass
-                
-                if NOTE_ID_PAGE_KEY in loader_data:
-                    try:
-                        video_info_res = loader_data[NOTE_ID_PAGE_KEY].get("videoInfoRes", {})
-                        item_list = video_info_res.get("item_list", [])
-                        if item_list and len(item_list) > 0:
-                            aweme_id = item_list[0].get("aweme_id") or item_list[0].get("item_id")
-                            if aweme_id:
-                                return str(aweme_id)
-                    except (KeyError, IndexError, TypeError):
-                        pass
-                
-                # 尝试从其他键中查找
-                for key, value in loader_data.items():
-                    if isinstance(value, dict):
-                        try:
-                            # 检查是否有 videoInfoRes
-                            if "videoInfoRes" in value:
-                                video_info_res = value["videoInfoRes"]
-                                item_list = video_info_res.get("item_list", [])
-                                if item_list and len(item_list) > 0:
-                                    aweme_id = item_list[0].get("aweme_id") or item_list[0].get("item_id")
-                                    if aweme_id:
-                                        return str(aweme_id)
-                        except (KeyError, IndexError, TypeError):
-                            continue
-                
-                # 尝试从 URL 路径参数中提取
-                if "params" in json_data:
-                    params = json_data["params"]
-                    video_id = params.get("id") or params.get("video_id") or params.get("aweme_id")
-                    if video_id:
-                        return str(video_id)
-            
-            # 方法2: 从页面 meta 标签提取
-            meta_pattern = re.compile(r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']', re.IGNORECASE)
-            match = meta_pattern.search(html)
-            if match:
-                og_url = match.group(1)
-                video_id = self.extract_video_id_from_url(og_url)
-                if video_id:
-                    return video_id
+        """Find an ID in router JSON, Open Graph metadata, or page markup."""
+        router_match = re.search(
+            r"window\._ROUTER_DATA\s*=\s*(.*?)</script>", html, re.DOTALL | re.IGNORECASE
+        )
+        if router_match:
+            raw_json = router_match.group(1).strip()
+            try:
+                parsed, _ = json.JSONDecoder().raw_decode(raw_json)
+                loader_data = parsed.get("loaderData", {})
+                for value in loader_data.values():
+                    if not isinstance(value, dict):
+                        continue
+                    video_info = value.get("videoInfoRes", {})
+                    items = video_info.get("item_list", []) if isinstance(video_info, dict) else []
+                    if items and isinstance(items[0], dict):
+                        item = items[0]
+                        item_id = item.get("aweme_id") or item.get("item_id") or item.get("video_id")
+                        if item_id is not None and str(item_id).isdigit():
+                            return str(item_id)
+                params = parsed.get("params", {})
+                if isinstance(params, dict):
+                    for key in ("id", "video_id", "aweme_id", "item_id", "vid", "modal_id"):
+                        value = params.get(key)
+                        if value is not None and str(value).isdigit():
+                            return str(value)
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                pass
 
-            url_patterns = [
-                r'https?://www\.douyin\.com/video/\d+',
-                r'https?://www\.iesdouyin\.com/share/video/\d+',
-                r'https?://www\.douyin\.com/note/\d+',
-            ]
-            for pattern in url_patterns:
-                match = re.search(pattern, html)
-                if match:
-                    video_id = self.extract_video_id_from_url(match.group(0))
-                    if video_id:
-                        return video_id
+        meta_matches = re.finditer(
+            r"<meta\b[^>]*(?:property|name)=[\"']og:url[\"'][^>]*content=[\"']([^\"']+)",
+            html,
+            re.IGNORECASE,
+        )
+        for match in meta_matches:
+            video_id = self.extract_video_id_from_url(match.group(1))
+            if video_id:
+                return video_id
 
-            location_pattern = re.compile(r'location\.href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
-            match = location_pattern.search(html)
-            if match:
-                video_id = self.extract_video_id_from_url(match.group(1))
-                if video_id:
-                    return video_id
-            
-            # 方法3: 从页面中直接搜索数字 ID（备用方法）
-            # 搜索常见的视频 ID 格式（19位数字）
-            id_pattern = re.compile(r'(?:video|aweme)[_-]?id["\']?\s*[:=]\s*["\']?(\d{15,20})')
-            match = id_pattern.search(html)
-            if match:
-                return match.group(1)
-                
-        except (json.JSONDecodeError, KeyError, IndexError, AttributeError) as e:
-            console.print(f"[dim]   从 HTML 提取视频 ID 失败: {e}[/dim]")
-        
+        for match in self.SHARE_URL_PATTERN.finditer(html):
+            url = match.group(0).rstrip(self.TRAILING_PUNCTUATION)
+            video_id = self.extract_video_id_from_url(url)
+            if video_id:
+                return video_id
+
+        for match in re.finditer(
+            r"(?:video|aweme|item|modal)[_-]?id[\"']?\s*[:=]\s*[\"']?(\d{6,20})",
+            html,
+            re.IGNORECASE,
+        ):
+            return match.group(1)
         return None
-    
+
     def parse(self, link_text: str) -> Optional[str]:
-        """解析抖音链接，返回视频 ID
-        
-        Args:
-            link_text: 用户输入的链接文本（可能包含分享口令）
-            
-        Returns:
-            视频 ID，解析失败返回 None
-        """
+        """Resolve a share message and return its video/note ID."""
         console.print("[cyan]🔍 开始解析链接...[/cyan]")
-        
-        # 1. 提取短链接
-        short_url = self.extract_short_url(link_text)
-        if not short_url:
+        share_url = self.extract_short_url(link_text)
+        if not share_url:
             console.print("[red]❌ 无法从输入中提取有效的抖音链接[/red]")
             return None
-        
-        console.print(f"[green]✓ 提取到链接: {short_url}[/green]")
-        
-        # 2. 如果是短链接，需要重定向并获取 HTML
-        html_content = None
-        if 'v.douyin.com' in short_url:
-            full_url, html_content = self.resolve_redirect(short_url)
+        console.print(f"[green]✓ 提取到链接: {share_url}[/green]")
+
+        if urlsplit(share_url).hostname == "v.douyin.com":
+            full_url, html = self.resolve_redirect(share_url)
             if not full_url:
                 return None
-            console.print(f"[green]✓ 重定向成功: {full_url[:80]}...[/green]")
         else:
-            full_url = short_url
-        
-        # 3. 首先尝试从 URL 中提取视频 ID
+            full_url = share_url
+            html = None
+
         video_id = self.extract_video_id_from_url(full_url)
-        
-        # 4. 如果无法从 URL 提取，尝试从 HTML 中提取
-        if not video_id and html_content:
-            console.print("[cyan]   尝试从页面内容中提取视频 ID...[/cyan]")
-            video_id = self.extract_video_id_from_html(html_content)
-        
-        # 5. 如果还是没有，尝试直接请求页面
+        if not video_id and html:
+            video_id = self.extract_video_id_from_html(html)
         if not video_id:
-            console.print("[cyan]   尝试直接请求页面...[/cyan]")
-            try:
-                response = self.session.get(full_url, timeout=self.timeout)
-                response.raise_for_status()
-                video_id = self.extract_video_id_from_html(response.text)
-            except Exception as e:
-                console.print(f"[dim]   直接请求失败: {e}[/dim]")
-        
+            full_url, html = self.resolve_redirect(full_url)
+            if full_url:
+                video_id = self.extract_video_id_from_url(full_url)
+                if not video_id and html:
+                    video_id = self.extract_video_id_from_html(html)
+
         if not video_id:
             console.print("[red]❌ 无法从 URL 或页面内容中提取视频 ID[/red]")
-            console.print(f"[dim]   请检查链接是否有效: {full_url}[/dim]")
             return None
-        
         console.print(f"[green]✅ 视频 ID: {video_id}[/green]")
         return video_id
-
-
-if __name__ == "__main__":
-    # 测试代码
-    parser = DouyinLinkParser()
-    
-    # 测试用例
-    test_links = [
-        "https://v.douyin.com/iRNBho6U/",
-        "8.32 nkV:/ 复制打开抖音，看看【的作品】# https://v.douyin.com/iRNBho6U/",
-        "https://www.douyin.com/video/7445285776618482979"
-    ]
-    
-    for link in test_links:
-        print(f"\n测试链接: {link[:50]}...")
-        video_id = parser.parse(link)
-        print(f"结果: {video_id}\n" + "="*50)
