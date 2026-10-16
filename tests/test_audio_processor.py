@@ -176,6 +176,31 @@ def test_download_follows_valid_relative_redirect_with_remaining_timeout(tmp_pat
     assert destination.read_bytes() == b"video"
 
 
+def test_download_follows_platform_cold_cdn_redirect_chain(tmp_path, monkeypatch):
+    playback = StreamResponse([])
+    playback.status_code = 302
+    playback.headers["Location"] = "https://v13-cold.douyinvod.com/video"
+    cold_cdn = StreamResponse([])
+    cold_cdn.status_code = 302
+    cold_cdn.headers["Location"] = "https://rw964n-41.free-lbv13.idouyinvod.com/video"
+    video = StreamResponse([b"real video bytes"])
+    get = Mock(side_effect=[playback, cold_cdn, video])
+    monkeypatch.setattr("src.audio_processor.requests.get", get)
+    destination = tmp_path / "video.mp4"
+
+    result = AudioProcessor().download_video("https://aweme.snssdk.com/aweme/v1/play/", destination)
+
+    assert result == destination
+    assert destination.read_bytes() == b"real video bytes"
+    assert [call.args[0] for call in get.call_args_list] == [
+        "https://aweme.snssdk.com/aweme/v1/play/",
+        "https://v13-cold.douyinvod.com/video",
+        "https://rw964n-41.free-lbv13.idouyinvod.com/video",
+    ]
+    assert all(call.kwargs["allow_redirects"] is False for call in get.call_args_list)
+    assert all(response.closed for response in (playback, cold_cdn, video))
+
+
 def test_download_can_outlast_request_timeout_while_data_keeps_arriving(tmp_path, monkeypatch):
     response = StreamResponse([b"first", b"second"])
     get = Mock(return_value=response)

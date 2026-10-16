@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 
 # 抖音分享页会返回播放 API 或 CDN 地址；新增域名需经过复核。
 MEDIA_DOMAINS = (
-    "douyin.com", "iesdouyin.com", "snssdk.com", "douyinvod.com",
+    "douyin.com", "iesdouyin.com", "snssdk.com", "douyinvod.com", "idouyinvod.com",
     "douyincdn.com", "zjcdn.com", "bytecdn.cn", "bytecdn.com",
     "byteimg.com", "ibytedtos.com", "ibyteimg.com", "pstatp.com",
 )
