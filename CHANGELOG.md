@@ -17,3 +17,4 @@
 - Whisper 关闭跨窗口文本提示并启用 beam search，减少错误上下文形成的循环重复；保留正常口语重复与低置信度重试，模型切换时释放旧缓存。
 - 新增可选 `local-chinese` 依赖与 SenseVoiceSmall 中文本地引擎，校验并缓存官方 int8 模型、按低能量位置分段处理长音频，输出标点；权重使用独立模型协议。
 - Web 配置页支持选择本地引擎及 Whisper 模型，说明下载大小与速度取舍；新增 `LOCAL_ASR_ENGINE` 和 Docker 构建选项 `INSTALL_CHINESE_ASR`。
+- 精简 Web 顶部与移动布局，折叠可选访问令牌，提供完整文本阅读、复制、TXT 下载和字数提示；更新 README 的引擎安装、启动、常见问题与页面预览。

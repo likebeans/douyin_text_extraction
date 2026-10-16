@@ -5,30 +5,39 @@
 {% block content %}
 <div class="content-wrapper">
     <div class="card">
-        <h2>📝 提取视频文本</h2>
-        <p class="subtitle">输入抖音视频链接或分享口令，提取视频中的文本内容</p>
+        <p class="eyebrow">从视频到文字</p>
+        <h1>粘贴链接，提取视频语音</h1>
+        <p class="subtitle">放入抖音链接或完整分享文本，转写后即可复制或下载。</p>
         <form id="extractForm" class="form">
             <div class="form-group">
                 <label for="link">抖音链接</label>
                 <textarea id="link" name="link" rows="3" maxlength="8192" placeholder="请输入抖音视频链接或分享口令，例如：&#10;https://v.douyin.com/iRNBho6U/&#10;或完整的分享文本" required aria-describedby="linkHint"></textarea>
-                <small id="linkHint" class="form-hint">支持抖音短链接或完整分享文本。</small>
+                <small id="linkHint" class="form-hint">支持短链接、视频链接和精选链接。识别方式可在<a href="{{ url_for('config_page') }}">配置页</a>切换。</small>
             </div>
             <div id="extractError" class="message message-error" role="alert" aria-live="assertive" tabindex="-1" style="display: none;"></div>
             <button type="submit" class="btn btn-primary" id="submitBtn">
                 <span class="btn-text">开始提取</span>
                 <span class="btn-loading" style="display: none;">处理中...</span>
             </button>
+            <p id="extractProgress" class="form-hint progress-hint" role="status" style="display: none;">正在下载并识别视频，请保持页面打开。首次使用本地模型可能需要较长时间。</p>
         </form>
     </div>
 
     <div id="resultArea" class="result-area" style="display: none;">
         <div class="card">
-            <h2>📹 视频信息</h2>
+            <h2>视频信息</h2>
             <div id="metadata" class="metadata"></div>
         </div>
         <div class="card">
-            <h2>📝 提取文本</h2>
-            <div id="textContent" class="text-content"></div>
+            <div class="section-title-row">
+                <div class="transcript-heading"><h2>转写结果</h2><span id="textCount" class="form-hint"></span></div>
+                <div class="transcript-actions">
+                    <button type="button" class="btn btn-secondary btn-compact" id="copyTextBtn" disabled>复制文本</button>
+                    <button type="button" class="btn btn-secondary btn-compact" id="downloadTextBtn" disabled>下载 .txt</button>
+                </div>
+                <span id="transcriptStatus" class="copy-status" role="status" aria-live="polite"></span>
+            </div>
+            <div id="textContent" class="text-content" role="region" aria-label="完整转写文本" tabindex="0"></div>
         </div>
     </div>
 </div>
@@ -59,23 +68,69 @@ function formatDuration(seconds) {
     return mins > 0 ? `${mins}分${secs ? `${secs}秒` : ''}` : `${secs}秒`;
 }
 
+let transcriptFilename = 'douyin_transcript.txt';
+const transcriptStatus = document.getElementById('transcriptStatus');
+const copyTextButton = document.getElementById('copyTextBtn');
+const downloadTextButton = document.getElementById('downloadTextBtn');
+
 function displayResult(data) {
     const metadata = data.metadata || {};
     const metadataHtml = `
-        <div class="metadata-item"><strong>标题：</strong>${escapeHtml(metadata.title)}</div>
+        <div class="metadata-item metadata-title"><strong>标题</strong>${escapeHtml(metadata.title)}</div>
         <div class="metadata-item"><strong>作者：</strong>${escapeHtml(metadata.author)}</div>
         <div class="metadata-item"><strong>时长：</strong>${formatDuration(metadata.duration)}</div>
         <div class="metadata-item"><strong>视频ID：</strong>${escapeHtml(metadata.video_id)}</div>
-        <div class="metadata-item"><strong>视频链接：</strong><a href="${escapeHtml(metadata.douyin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(metadata.douyin_url)}</a></div>
+        <div class="metadata-item"><strong>原视频：</strong><a href="${escapeHtml(metadata.douyin_url)}" target="_blank" rel="noopener noreferrer">在抖音查看 ↗</a></div>
     `;
     document.getElementById('metadata').innerHTML = metadataHtml;
     const text = String(data.text || '');
-    document.getElementById('textContent').innerHTML = text
-        ? text.split('\n').map(line => line.trim() ? `<p>${escapeHtml(line)}</p>` : '<br>').join('')
-        : '<p class="text-muted">未识别到文本内容</p>';
-    document.getElementById('resultArea').style.display = 'block';
-    document.getElementById('resultArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const textContent = document.getElementById('textContent');
+    const hasText = Boolean(text.trim());
+    textContent.textContent = hasText ? text : '未识别到文本内容';
+    textContent.classList.toggle('text-muted', !hasText);
+    copyTextButton.disabled = !hasText;
+    downloadTextButton.disabled = !hasText;
+    transcriptStatus.textContent = '';
+    document.getElementById('textCount').textContent = `${Array.from(text.replace(/\s/g, '')).length.toLocaleString()} 字 · 自动转写，请核对原视频`;
+    const videoId = String(metadata.video_id || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+    transcriptFilename = videoId ? `douyin_${videoId}.txt` : 'douyin_transcript.txt';
+    document.getElementById('resultArea').style.display = 'flex';
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    document.getElementById('resultArea').scrollIntoView({ behavior, block: 'start' });
 }
+
+copyTextButton.addEventListener('click', async function () {
+    const text = document.getElementById('textContent').textContent;
+    try {
+        await navigator.clipboard.writeText(text);
+        transcriptStatus.textContent = '转写文本已复制。';
+    } catch (_) {
+        const content = document.getElementById('textContent');
+        content.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        if (selection) {
+            const range = document.createRange();
+            range.selectNodeContents(content);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+        transcriptStatus.textContent = '浏览器未允许复制，已选中文本，请手动复制或下载。';
+    }
+});
+
+downloadTextButton.addEventListener('click', function () {
+    const text = document.getElementById('textContent').textContent;
+    const file = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = transcriptFilename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    transcriptStatus.textContent = '已开始下载文本文件。';
+});
 
 extractForm.addEventListener('submit', async function (event) {
     event.preventDefault();
@@ -89,6 +144,8 @@ extractForm.addEventListener('submit', async function (event) {
     submitButton.querySelector('.btn-text').style.display = 'none';
     submitButton.querySelector('.btn-loading').style.display = 'inline';
     extractError.style.display = 'none';
+    extractForm.setAttribute('aria-busy', 'true');
+    document.getElementById('extractProgress').style.display = 'block';
     document.getElementById('resultArea').style.display = 'none';
     try {
         const data = await window.apiFetch('/api/extract', {
@@ -104,6 +161,8 @@ extractForm.addEventListener('submit', async function (event) {
             showError(error.message || '提取失败，请稍后重试。');
         }
     } finally {
+        extractForm.removeAttribute('aria-busy');
+        document.getElementById('extractProgress').style.display = 'none';
         submitButton.disabled = false;
         submitButton.querySelector('.btn-text').style.display = 'inline';
         submitButton.querySelector('.btn-loading').style.display = 'none';

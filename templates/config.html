@@ -5,15 +5,16 @@
 {% block content %}
 <div class="content-wrapper">
     <div class="card">
-        <h2>⚙️ 系统配置</h2>
-        <p class="subtitle">配置语音识别服务和视频处理参数</p>
+        <p class="eyebrow">按你的使用方式设置</p>
+        <h1>识别与处理配置</h1>
+        <p class="subtitle">选择识别方式并保存，下次提取即生效。密钥留空会保留原值。</p>
         <p id="environmentNotice" class="form-hint" style="display: none;" role="status" aria-live="polite">部分设置由环境变量管理，页面不会覆盖这些设置。</p>
 
         <form id="configForm" class="form">
             <div class="form-section">
-                <h3>🎤 ASR 提供商</h3>
+                <h2>语音识别</h2>
                 <div class="form-group">
-                    <label for="ASR_PROVIDER">ASR 提供商 <span class="required">*</span></label>
+                    <label for="ASR_PROVIDER">识别方式 <span class="required">*</span></label>
                     <select id="ASR_PROVIDER" name="ASR_PROVIDER" aria-describedby="providerHint">
                         <option value="dashscope">DashScope（云端）</option>
                         <option value="local">本地识别（SenseVoice / Whisper）</option>
@@ -73,7 +74,7 @@
             </div>
 
             <div class="form-section">
-                <h3>⚙️ 基础配置</h3>
+                <h2>处理与输出</h2>
                 <div class="form-group">
                     <label for="MAX_VIDEO_DURATION">最大视频时长（秒）</label>
                     <input type="number" id="MAX_VIDEO_DURATION" name="MAX_VIDEO_DURATION" min="1" max="3600" required aria-describedby="durationHint">
@@ -87,7 +88,7 @@
             </div>
 
             <div class="form-section">
-                <h3>☁️ OSS 配置（兜底方案，可选）</h3>
+                <h2>云端备用流程 <span class="optional-label">可选</span></h2>
                 <p class="subtitle">可在直接识别视频链接失败时，通过 OSS 兜底处理。</p>
                 <div class="form-group">
                     <label for="OSS_ENABLE_FALLBACK">
