@@ -113,4 +113,4 @@ def test_unexpected_error_does_not_print_secret(cli):
 def test_version():
     response = runner.invoke(main.app, ["version"])
     assert response.exit_code == 0
-    assert "0.3.0" in response.stdout
+    assert "1.0.0" in response.stdout

@@ -210,4 +210,4 @@ uv build --wheel
 - [Web API 对接](docs/API对接文档.md)
 - [文档索引](docs/README.md) · [变更记录](CHANGELOG.md) · [安全策略](SECURITY.md)
 
-项目代码采用 [MIT](LICENSE) 许可，当前包版本为 `0.3.0`。**模型权重不随代码分发，也不自动适用项目许可。** SenseVoiceSmall 由 FunASR / FunAudioLLM 提供，适用独立的 [FunASR 模型协议](https://github.com/modelscope/FunASR/blob/58830eca4012644aac0c3218c3ccc7d98f003fda/MODEL_LICENSE)；商业使用解释仍待许可方确认，详见 [官方讨论](https://github.com/QwenAudio/SenseVoice/issues/334)。
+项目代码采用 [MIT](LICENSE) 许可，当前包版本为 `1.0.0`，对应 Git 标签 `v1.0`。**模型权重不随代码分发，也不自动适用项目许可。** SenseVoiceSmall 由 FunASR / FunAudioLLM 提供，适用独立的 [FunASR 模型协议](https://github.com/modelscope/FunASR/blob/58830eca4012644aac0c3218c3ccc7d98f003fda/MODEL_LICENSE)；商业使用解释仍待许可方确认，详见 [官方讨论](https://github.com/QwenAudio/SenseVoice/issues/334)。

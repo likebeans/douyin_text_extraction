@@ -600,7 +600,7 @@ wheels = [
 
 [[package]]
 name = "douyin-text-extractor"
-version = "0.3.0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "dashscope" },

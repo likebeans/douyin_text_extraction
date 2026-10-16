@@ -1,6 +1,6 @@
 [project]
 name = "douyin-text-extractor"
-version = "0.3.0"
+version = "1.0.0"
 description = "抖音视频文本提取工具，提供 CLI 与 Web API"
 readme = "README.md"
 requires-python = ">=3.10"

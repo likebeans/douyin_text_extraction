@@ -36,7 +36,7 @@ uv run --locked pytest
 
 ```bash
 uv build --wheel --no-sources
-python -m zipfile -l dist/douyin_text_extractor-0.3.0-py3-none-any.whl
+python -m zipfile -l dist/douyin_text_extractor-1.0.0-py3-none-any.whl
 uv run douyin-extract --help
 uv run python -c 'from web_app import app; client=app.test_client(); assert client.get("/").status_code == 200; assert client.get("/static/style.css").status_code == 200'
 ```
