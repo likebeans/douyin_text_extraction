@@ -180,6 +180,7 @@ class ASRClient:
                 temp_dir=work_dir,
                 cleanup=settings.cleanup_temp_files,
                 timeout=request_timeout,
+                download_timeout=settings.download_timeout,
                 max_download_bytes=settings.max_download_bytes,
                 ffmpeg_timeout=settings.ffmpeg_timeout,
             )

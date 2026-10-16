@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     output_dir: Path = Path(DEFAULT_OUTPUT_DIR)
 
     request_timeout: int = Field(default=DEFAULT_REQUEST_TIMEOUT, gt=0)
+    download_timeout: int = Field(default=300, gt=0)
     retry_times: int = Field(default=DEFAULT_RETRY_TIMES, ge=0, le=10)
     asr_timeout: int = Field(default=600, gt=0)
     ffmpeg_timeout: int = Field(default=120, gt=0)

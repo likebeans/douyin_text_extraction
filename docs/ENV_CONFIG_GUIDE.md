@@ -18,15 +18,18 @@ cp .env.example .env
 | `WHISPER_MODEL` | `base` | 本地 Whisper 模型大小 |
 | `MAX_VIDEO_DURATION` | `600` | 视频时长上限，秒 |
 | `OUTPUT_DIR` | `./output` | CLI 默认输出目录 |
-| `REQUEST_TIMEOUT` | `30` | HTTP 请求与本地媒体下载超时，秒 |
-| `RETRY_TIMES` | `3` | 常规请求重试次数 |
+| `REQUEST_TIMEOUT` | `30` | HTTP 连接与单次读取等待超时，秒 |
+| `DOWNLOAD_TIMEOUT` | `300` | 单个媒体文件的下载总时限，秒 |
+| `RETRY_TIMES` | `3` | HTTP 重试次数；分享页暂缺视频详情时也最多重试此次数 |
 | `ASR_TIMEOUT` | `600` | 云端 ASR 等待时限，秒 |
 | `FFMPEG_TIMEOUT` | `120` | FFmpeg 本地音频提取进程超时，秒 |
 | `MAX_DOWNLOAD_BYTES` | `536870912` | 本地流程下载大小上限，字节 |
 | `TEMP_DIR` | `./temp` | 临时文件目录 |
 | `CLEANUP_TEMP_FILES` | `true` | 成功或失败后清理本地流程临时文件 |
 
-`REQUEST_TIMEOUT` 控制 HTTP 请求及本地媒体下载等待时间；`FFMPEG_TIMEOUT` 独立限制 FFmpeg 本地音频提取进程的运行时间。调整其中一项不会改变另一项。
+`REQUEST_TIMEOUT` 限制 HTTP 连接和单次读取等待，`DOWNLOAD_TIMEOUT` 独立限制媒体下载总耗时，`FFMPEG_TIMEOUT` 限制 FFmpeg 进程运行时间。持续传输数据的下载不会仅因超过 30 秒而中断，但仍受下载总时限和大小上限约束。
+
+当分享页成功响应却暂缺 `videoInfoRes` 时，工具复用同一会话并等待后重试，最多共请求 `RETRY_TIMES + 1` 次。明确拒绝、视频 ID 不匹配和格式无效的响应不会走这一重试。
 
 ## OSS 备用流程
 

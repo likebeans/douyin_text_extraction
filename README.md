@@ -63,7 +63,9 @@ JSON 模式下，标准输出只包含 JSON，诊断信息写到标准错误。�
 uv sync --extra local
 ```
 
-本地识别还需要系统 FFmpeg。首次加载模型时，Whisper 可能需要下载模型文件。`REQUEST_TIMEOUT` 控制 HTTP 请求和媒体下载等待时间；`FFMPEG_TIMEOUT` 单独限制 FFmpeg 本地音频提取进程的运行时间。
+本地识别还需要系统 FFmpeg。首次加载模型时，Whisper 可能需要下载模型文件。`REQUEST_TIMEOUT` 控制 HTTP 连接和单次读取等待时间；`DOWNLOAD_TIMEOUT` 默认给整个媒体下载 300 秒，`FFMPEG_TIMEOUT` 单独限制 FFmpeg 音频提取进程。
+
+分享页有时会返回 HTTP 200，但暂时缺少视频详情。工具会复用会话并按 `RETRY_TIMES` 做有限重试；持续缺数据、明确拒绝访问或非视频内容仍会返回错误，不保证所有链接均可提取。
 
 ## Web 界面
 

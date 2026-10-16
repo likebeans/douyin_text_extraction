@@ -84,7 +84,7 @@ def test_download_enforces_total_elapsed_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr("src.audio_processor.time.monotonic", lambda: next(values))
     destination = tmp_path / "video.mp4"
 
-    assert AudioProcessor(timeout=1).download_video("https://v3.douyinvod.com/video", destination) is None
+    assert AudioProcessor(download_timeout=1).download_video("https://v3.douyinvod.com/video", destination) is None
     assert not destination.exists()
     assert response.closed
 
@@ -168,12 +168,30 @@ def test_download_follows_valid_relative_redirect_with_remaining_timeout(tmp_pat
     monkeypatch.setattr("src.audio_processor.time.monotonic", lambda: next(ticks))
     destination = tmp_path / "video.mp4"
 
-    assert AudioProcessor(timeout=10).download_video("https://v3.douyinvod.com/video", destination) == destination
+    assert AudioProcessor(timeout=10, download_timeout=10).download_video("https://v3.douyinvod.com/video", destination) == destination
     assert get.call_args_list[1].args[0] == "https://v3.douyinvod.com/actual-video"
     assert [call.kwargs["timeout"] for call in get.call_args_list] == [9, 6]
     assert all(call.kwargs["allow_redirects"] is False for call in get.call_args_list)
     assert redirect.closed and video.closed
     assert destination.read_bytes() == b"video"
+
+
+def test_download_can_outlast_request_timeout_while_data_keeps_arriving(tmp_path, monkeypatch):
+    response = StreamResponse([b"first", b"second"])
+    get = Mock(return_value=response)
+    monkeypatch.setattr("src.audio_processor.requests.get", get)
+    ticks = iter([0, 0, 20, 20, 40, 40])
+    monkeypatch.setattr("src.audio_processor.time.monotonic", lambda: next(ticks))
+    destination = tmp_path / "video.mp4"
+
+    result = AudioProcessor(timeout=30, download_timeout=300).download_video(
+        "https://v3.douyinvod.com/video", destination,
+    )
+
+    assert result == destination
+    assert destination.read_bytes() == b"firstsecond"
+    assert get.call_args.kwargs["timeout"] == 30
+    assert response.closed
 
 
 def test_download_bounds_redirect_count(tmp_path, monkeypatch):

@@ -11,3 +11,5 @@
 - OSS 默认使用限时签名 URL 支持私有 Bucket；详见 [OSS 配置指南](docs/OSS_GUIDE.md)。
 - 新增独立的 `FFMPEG_TIMEOUT` 和经令牌保护的 `WEB_PUBLIC_ORIGIN` 配置说明；媒体下载的初始 URL 与重定向目标受平台/CDN 域名校验。
 - 默认测试不连接外部服务；真实 OSS 测试须显式启用。
+- 修复分享页 HTTP 200 但间歇性缺失视频详情的情况，复用会话进行有限重试并区分无视频、访问拒绝和数据异常。
+- 新增 `DOWNLOAD_TIMEOUT=300`，将媒体下载总时限与 `REQUEST_TIMEOUT` 的连接/读取等待超时分开，避免持续下载的视频被 30 秒时限中断。

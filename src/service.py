@@ -60,6 +60,7 @@ class ExtractionService:
                 temp_dir=self.settings.temp_dir,
                 cleanup=self.settings.cleanup_temp_files,
                 timeout=self.settings.request_timeout,
+                download_timeout=self.settings.download_timeout,
                 max_download_bytes=self.settings.max_download_bytes,
                 ffmpeg_timeout=self.settings.ffmpeg_timeout,
             )

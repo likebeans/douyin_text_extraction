@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Optional
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -146,37 +147,74 @@ class DouyinFetcher:
                     self._close_response(response)
         return None
 
+    def _get_video_item(self, video_id: str) -> Optional[dict]:
+        share_url = f"https://www.iesdouyin.com/share/video/{video_id}"
+        console.print(f"[dim]   访问: {share_url}[/dim]")
+        for attempt in range(self.retry_times + 1):
+            if attempt:
+                time.sleep(min(0.5 * 2 ** (attempt - 1), 2))
+            page = self._get_page(share_url)
+            if not page:
+                # HTTP failures already use the session's bounded retry policy.
+                return None
+            _, html = page
+            match = self.ROUTER_DATA_PATTERN.search(html)
+            if not match:
+                console.print("[red]❌ 页面未提供视频数据，可能需要在抖音内访问[/red]")
+                return None
+            try:
+                json_data, _ = json.JSONDecoder().raw_decode(match.group(1).strip())
+            except json.JSONDecodeError:
+                console.print("[red]❌ 页面视频数据格式无效[/red]")
+                return None
+            loader_data = json_data.get("loaderData") if isinstance(json_data, dict) else None
+            if not isinstance(loader_data, dict):
+                console.print("[red]❌ 未知的页面数据格式[/red]")
+                return None
+            page_data = loader_data.get("video_(id)/page") or loader_data.get("note_(id)/page")
+            if not isinstance(page_data, dict):
+                console.print("[red]❌ 页面未包含视频或笔记详情[/red]")
+                return None
+            page_id = page_data.get("itemId")
+            if page_id is not None and str(page_id) != video_id:
+                console.print("[red]❌ 页面视频 ID 与请求不一致[/red]")
+                return None
+            video_info_res = page_data.get("videoInfoRes")
+            if video_info_res is not None:
+                if not isinstance(video_info_res, dict):
+                    console.print("[red]❌ 视频详情格式无效[/red]")
+                    return None
+                if video_info_res.get("status_code", 0) != 0:
+                    console.print("[red]❌ 平台未允许获取该视频详情[/red]")
+                    return None
+                item_list = video_info_res.get("item_list")
+                if item_list is not None:
+                    if not isinstance(item_list, list):
+                        console.print("[red]❌ 视频列表格式无效[/red]")
+                        return None
+                    if item_list:
+                        for item in item_list:
+                            if isinstance(item, dict) and str(item.get("aweme_id", video_id)) == video_id:
+                                return item
+                        console.print("[red]❌ 页面未返回匹配的视频详情[/red]")
+                        return None
+            # Public share pages intermittently omit videoInfoRes even with HTTP 200.
+            # Reuse the session, but do not retry explicit denials or invalid responses.
+            if attempt < self.retry_times:
+                console.print(f"[yellow]⚠ 页面暂未提供视频详情，正在重试（{attempt + 1}/{self.retry_times}）...[/yellow]")
+        console.print("[red]❌ 页面多次未提供视频详情，请稍后重试或确认视频可公开访问[/red]")
+        return None
+
     def fetch(self, video_id: str) -> Optional[VideoMetadata]:
         """Fetch metadata for a numeric video or note ID."""
         if not isinstance(video_id, str) or not video_id.isdigit():
             console.print("[red]❌ 视频 ID 必须为数字[/red]")
             return None
         console.print("[cyan]📡 正在获取视频信息...[/cyan]")
-        share_url = f"https://www.iesdouyin.com/share/video/{video_id}"
-        console.print(f"[dim]   访问: {share_url}[/dim]")
-
-        page = self._get_page(share_url)
-        if not page:
-            return None
-        _, html = page
-        match = self.ROUTER_DATA_PATTERN.search(html)
-        if not match:
-            console.print("[red]❌ 无法从 HTML 中提取数据[/red]")
-            console.print(f"[dim]   页面内容长度: {len(html)}[/dim]")
+        item = self._get_video_item(video_id)
+        if item is None:
             return None
         try:
-            json_data, _ = json.JSONDecoder().raw_decode(match.group(1).strip())
-            loader_data = json_data.get("loaderData", {})
-            page_data = loader_data.get("video_(id)/page") or loader_data.get("note_(id)/page")
-            if not isinstance(page_data, dict):
-                console.print("[red]❌ 未知的数据格式[/red]")
-                return None
-            video_info_res = page_data.get("videoInfoRes", {})
-            item_list = video_info_res.get("item_list", []) if isinstance(video_info_res, dict) else []
-            if not item_list or not isinstance(item_list[0], dict):
-                console.print("[red]❌ item_list 为空，笔记可能没有视频[/red]")
-                return None
-            item = item_list[0]
             video_info = item.get("video") or {}
             if not isinstance(video_info, dict):
                 video_info = {}

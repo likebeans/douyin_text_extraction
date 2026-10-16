@@ -136,6 +136,7 @@ def test_local_workspace_lifecycle(configured, dependencies, monkeypatch, cleanu
 def test_successful_local_result_survives_cleanup_failure(configured, dependencies, monkeypatch, caplog):
     configured.asr_provider = "local"
     configured.ffmpeg_timeout = 85
+    configured.download_timeout = 240
     processor = Mock()
     processor.check_ffmpeg.return_value = True
     processor.download_video.side_effect = lambda url, path: path
@@ -152,6 +153,7 @@ def test_successful_local_result_survives_cleanup_failure(configured, dependenci
 
     assert result.text == "已成功转写"
     assert processor_class.call_args.kwargs["ffmpeg_timeout"] == 85
+    assert processor_class.call_args.kwargs["download_timeout"] == 240
     cleanup.assert_called_once()
     assert "临时目录清理失败" in caplog.text
 

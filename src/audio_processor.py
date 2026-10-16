@@ -28,6 +28,7 @@ class AudioProcessor:
         timeout: int = 30,
         max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
         ffmpeg_timeout: int = 120,
+        download_timeout: int = 300,
     ):
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero")
@@ -36,6 +37,9 @@ class AudioProcessor:
         self.temp_dir = Path(temp_dir) if temp_dir is not None else Path(tempfile.gettempdir())
         self.cleanup = cleanup
         self.timeout = timeout
+        if download_timeout <= 0:
+            raise ValueError("download_timeout must be greater than zero")
+        self.download_timeout = download_timeout
         self.max_download_bytes = max_download_bytes
         if ffmpeg_timeout <= 0:
             raise ValueError("ffmpeg_timeout must be greater than zero")
@@ -71,10 +75,13 @@ class AudioProcessor:
             for redirect_count in range(6):
                 if not is_platform_media_url(current_url):
                     raise ValueError("拒绝下载非平台媒体地址")
-                remaining = self.timeout - (time.monotonic() - started)
+                remaining = self.download_timeout - (time.monotonic() - started)
                 if remaining <= 0:
                     raise TimeoutError("视频下载超过总耗时限制")
-                response = requests.get(current_url, stream=True, timeout=remaining, allow_redirects=False)
+                response = requests.get(
+                    current_url, stream=True,
+                    timeout=min(self.timeout, remaining), allow_redirects=False,
+                )
                 if response.status_code not in {301, 302, 303, 307, 308}:
                     break
                 location = response.headers.get("Location")
@@ -99,7 +106,7 @@ class AudioProcessor:
             try:
                 with os.fdopen(fd, "wb") as output:
                     for chunk in response.iter_content(chunk_size=8192):
-                        if time.monotonic() - started > self.timeout:
+                        if time.monotonic() - started > self.download_timeout:
                             raise TimeoutError("视频下载超过总耗时限制")
                         if not chunk:
                             continue
@@ -107,7 +114,7 @@ class AudioProcessor:
                         if downloaded > self.max_download_bytes:
                             raise ValueError("视频大小超过下载限制")
                         output.write(chunk)
-                        if time.monotonic() - started > self.timeout:
+                        if time.monotonic() - started > self.download_timeout:
                             raise TimeoutError("视频下载超过总耗时限制")
                     output.flush()
                     os.fsync(output.fileno())

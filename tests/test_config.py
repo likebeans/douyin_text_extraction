@@ -8,6 +8,7 @@ from config import Settings
 @pytest.mark.parametrize("values", [
     {"asr_provider": "unknown"},
     {"request_timeout": 0},
+    {"download_timeout": 0},
     {"asr_timeout": -1},
     {"ffmpeg_timeout": 0},
     {"max_video_duration": 0},

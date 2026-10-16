@@ -128,7 +128,7 @@ def config_check():
         console.print("OSS 配置不完整，请检查 OSS_ACCESS_KEY_ID / SECRET / BUCKET_NAME / ENDPOINT", style="red")
     console.print(f"最长视频：{current_settings.max_video_duration}秒")
     console.print(f"输出目录：{current_settings.output_dir}", markup=False)
-    console.print(f"请求超时：{current_settings.request_timeout}秒；ASR 等待：{current_settings.asr_timeout}秒")
+    console.print(f"请求超时：{current_settings.request_timeout}秒；下载时限：{current_settings.download_timeout}秒；ASR 等待：{current_settings.asr_timeout}秒")
     console.print(f"Web 访问令牌：{'已配置' if current_settings.web_api_token else '未配置，仅限本机访问'}")
     if not valid:
         raise typer.Exit(code=1)
