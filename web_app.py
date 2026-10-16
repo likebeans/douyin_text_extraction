@@ -9,7 +9,7 @@ import os
 import tempfile
 from pathlib import Path
 from threading import BoundedSemaphore, Lock
-from typing import Any
+from typing import Any, get_args
 from urllib.parse import urlsplit
 
 from dotenv import dotenv_values, set_key
@@ -30,6 +30,8 @@ CONFIG_FIELDS = {
     "DASHSCOPE_API_KEY": "dashscope_api_key",
     "MAX_VIDEO_DURATION": "max_video_duration",
     "ASR_MODEL": "asr_model",
+    "WHISPER_MODEL": "whisper_model",
+    "LOCAL_ASR_ENGINE": "local_asr_engine",
     "OUTPUT_DIR": "output_dir",
     "OSS_ENABLE_FALLBACK": "oss_enable_fallback",
     "OSS_ACCESS_KEY_ID": "oss_access_key_id",
@@ -40,6 +42,7 @@ CONFIG_FIELDS = {
 SECRET_FIELDS = {"DASHSCOPE_API_KEY", "OSS_ACCESS_KEY_ID", "OSS_ACCESS_KEY_SECRET"}
 ENV_NAMES = {field: field for field in CONFIG_FIELDS}
 ASR_MODELS = {"paraformer-v2"}
+WHISPER_MODELS = set(get_args(Settings.model_fields["whisper_model"].annotation))
 _env_write_lock = Lock()
 
 from src.service import ExtractionError, ExtractionService
@@ -248,6 +251,8 @@ def _configured_fields(settings: Settings) -> dict[str, Any]:
         "DASHSCOPE_API_KEY_CONFIGURED": bool(settings.dashscope_api_key),
         "MAX_VIDEO_DURATION": str(settings.max_video_duration),
         "ASR_MODEL": settings.asr_model,
+        "WHISPER_MODEL": settings.whisper_model,
+        "LOCAL_ASR_ENGINE": settings.local_asr_engine,
         "OUTPUT_DIR": str(settings.output_dir),
         "OSS_ENABLE_FALLBACK": str(settings.oss_enable_fallback).lower(),
         "OSS_ACCESS_KEY_ID_CONFIGURED": bool(settings.oss_access_key_id),
@@ -290,6 +295,16 @@ def _parse_config_update(data: dict[str, Any], current: Settings) -> dict[str, s
             if value not in ASR_MODELS:
                 raise ValueError("仅支持 paraformer-v2 文件识别模型")
             normalized[key] = value
+        elif key == "LOCAL_ASR_ENGINE":
+            value = _parse_text_field(data, key, max_length=32)
+            if value not in {"whisper", "sensevoice"}:
+                raise ValueError("本地识别引擎无效")
+            normalized[key] = value
+        elif key == "WHISPER_MODEL":
+            value = _parse_text_field(data, key, max_length=32)
+            if value not in WHISPER_MODELS:
+                raise ValueError("Whisper 模型无效")
+            normalized[key] = value
         elif key == "MAX_VIDEO_DURATION":
             value = data[key]
             if isinstance(value, bool) or not isinstance(value, (int, str)):
@@ -318,6 +333,8 @@ def _parse_config_update(data: dict[str, Any], current: Settings) -> dict[str, s
         "DASHSCOPE_API_KEY": current.dashscope_api_key,
         "MAX_VIDEO_DURATION": current.max_video_duration,
         "ASR_MODEL": current.asr_model,
+        "WHISPER_MODEL": current.whisper_model,
+        "LOCAL_ASR_ENGINE": current.local_asr_engine,
         "OUTPUT_DIR": str(current.output_dir),
         "OSS_ENABLE_FALLBACK": current.oss_enable_fallback,
         "OSS_ACCESS_KEY_ID": current.oss_access_key_id,

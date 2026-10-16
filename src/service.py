@@ -11,6 +11,7 @@ from src.audio_processor import AudioProcessor
 from src.fetcher import DouyinFetcher, VideoMetadata
 from src.local_asr_client import LocalASRClient
 from src.parser import DouyinLinkParser
+from src.sensevoice_client import SenseVoiceClient
 
 
 class ExtractionError(Exception):
@@ -53,9 +54,13 @@ class ExtractionService:
                 raise ExtractionError("已启用 OSS 兜底，但 OSS 配置不完整")
         else:
             try:
-                local_asr = LocalASRClient(model=self.settings.whisper_model)
+                if self.settings.local_asr_engine == "sensevoice":
+                    local_asr = SenseVoiceClient()
+                else:
+                    local_asr = LocalASRClient(model=self.settings.whisper_model)
             except ImportError as exc:
-                raise ExtractionError("本地 Whisper 未安装，请运行 uv sync --extra local") from exc
+                extra = "local-chinese" if self.settings.local_asr_engine == "sensevoice" else "local"
+                raise ExtractionError(f"本地识别依赖未安装，请运行 uv sync --extra {extra}") from exc
             processor = AudioProcessor(
                 temp_dir=self.settings.temp_dir,
                 cleanup=self.settings.cleanup_temp_files,

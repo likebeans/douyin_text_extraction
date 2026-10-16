@@ -90,6 +90,18 @@ def test_config_check_failure_has_nonzero_exit(cli, monkeypatch):
     cli[2].assert_not_called()
 
 
+def test_config_check_reports_selected_chinese_engine(cli, monkeypatch):
+    cli[0].asr_provider = "local"
+    cli[0].local_asr_engine = "sensevoice"
+    checked = []
+    monkeypatch.setattr(main.importlib.util, "find_spec", lambda name: checked.append(name) or object())
+    monkeypatch.setattr(main.AudioProcessor, "check_ffmpeg", lambda self: True)
+    result = runner.invoke(main.app, ["config-check"])
+    assert result.exit_code == 0
+    assert "SenseVoiceSmall" in result.output
+    assert checked == ["sherpa_onnx", "numpy"]
+
+
 def test_unexpected_error_does_not_print_secret(cli):
     cli[1].extract.side_effect = RuntimeError("secret-test-key")
     response = runner.invoke(main.app, ["extract", "a link"])

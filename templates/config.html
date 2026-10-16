@@ -16,9 +16,9 @@
                     <label for="ASR_PROVIDER">ASR 提供商 <span class="required">*</span></label>
                     <select id="ASR_PROVIDER" name="ASR_PROVIDER" aria-describedby="providerHint">
                         <option value="dashscope">DashScope（云端）</option>
-                        <option value="local">Local Whisper（本地）</option>
+                        <option value="local">本地识别（SenseVoice / Whisper）</option>
                     </select>
-                    <small id="providerHint" class="form-hint">选择语音识别提供商。Local 需要安装 Whisper 和 FFmpeg。</small>
+                    <small id="providerHint" class="form-hint">选择语音识别提供商。本地识别无需 API Key，需要安装对应引擎及 FFmpeg。</small>
                 </div>
 
                 <div id="dashscope-settings" class="provider-settings">
@@ -37,12 +37,36 @@
                 </div>
 
                 <div id="local-settings" class="provider-settings" style="display: none;">
+                    <div class="form-group">
+                        <label for="LOCAL_ASR_ENGINE">本地识别引擎</label>
+                        <select id="LOCAL_ASR_ENGINE" name="LOCAL_ASR_ENGINE" aria-describedby="localEngineHint">
+                            <option value="sensevoice">SenseVoiceSmall（中文口语）</option>
+                            <option value="whisper">Whisper</option>
+                        </select>
+                        <small id="localEngineHint" class="form-hint">保存后对下一次提取生效。口音、多人同时说话和背景音乐仍可能产生错字。</small>
+                    </div>
+                    <div id="sensevoice-settings" class="info-box" style="display: none;">
+                        <p>SenseVoiceSmall — FunASR / FunAudioLLM。在本机 CPU 识别中文并生成标点；首次下载约 163 MB，解压后约 240 MB。</p>
+                        <p>权重使用独立的 <a href="https://github.com/modelscope/FunASR/blob/58830eca4012644aac0c3218c3ccc7d98f003fda/MODEL_LICENSE" target="_blank" rel="noopener noreferrer">FunASR 模型协议</a>，不属于本项目 MIT 许可。商用解释仍待许可方确认，详见 <a href="https://github.com/QwenAudio/SenseVoice/issues/334" target="_blank" rel="noopener noreferrer">官方说明</a>。</p>
+                    </div>
+                    <div class="form-group" id="whisper-settings">
+                        <label for="WHISPER_MODEL">Whisper 模型</label>
+                        <select id="WHISPER_MODEL" name="WHISPER_MODEL" aria-describedby="whisperModelHint">
+                            <option value="turbo">turbo（优先质量）</option>
+                            <option value="small">small（较小模型）</option>
+                            <option value="base">base（优先速度）</option>
+                            <option value="tiny">tiny（最低资源占用）</option>
+                            <option value="medium">medium（需要更多资源）</option>
+                            <option value="large">large（需要更多资源）</option>
+                        </select>
+                        <small id="whisperModelHint" class="form-hint" aria-live="polite"></small>
+                    </div>
                     <div class="info-box">
-                        <strong>Local Whisper 说明：</strong>
+                        <strong>本地识别说明：</strong>
                         <ul>
                             <li>在本机完成语音识别，无需云端 API Key</li>
-                            <li>需要安装 Whisper 和 FFmpeg；首次使用会下载所选模型</li>
-                            <li>CPU 可运行，GPU 可提升处理速度</li>
+                            <li>需要安装对应引擎和 FFmpeg；首次使用会下载所选模型</li>
+                            <li>SenseVoice 使用 CPU；Whisper 可使用 CUDA GPU</li>
                         </ul>
                     </div>
                 </div>
@@ -112,10 +136,29 @@
 {% block scripts %}
 <script>
 const configFields = [
-    'ASR_PROVIDER', 'DASHSCOPE_API_KEY', 'ASR_MODEL', 'MAX_VIDEO_DURATION', 'OUTPUT_DIR',
+    'ASR_PROVIDER', 'DASHSCOPE_API_KEY', 'ASR_MODEL', 'LOCAL_ASR_ENGINE', 'WHISPER_MODEL', 'MAX_VIDEO_DURATION', 'OUTPUT_DIR',
     'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET', 'OSS_BUCKET_NAME', 'OSS_ENDPOINT'
 ];
 let loadedConfig = null;
+const whisperModelHints = {
+    turbo: '首次下载约 1.6 GB。适合优先考虑识别质量；CPU 转写可能较慢，需预留数 GB 内存。',
+    small: '首次下载约 484 MB。比 base 占用更多资源，中文口语仍可能有错字。',
+    base: '首次下载约 145 MB。速度较快，口音、多人对话和背景音乐可能导致较多错字。',
+    tiny: '首次下载约 76 MB。适合试跑或低配置机器，不建议用于要求准确的中文转写。',
+    medium: '首次下载约 1.5 GB。内存和计算需求较高，CPU 转写可能需要较长时间。',
+    large: '首次下载约 3.1 GB。内存和计算需求较高，建议使用足够显存的 GPU。'
+};
+
+function updateWhisperModelHint() {
+    const model = document.getElementById('WHISPER_MODEL').value;
+    document.getElementById('whisperModelHint').textContent = whisperModelHints[model] || '';
+}
+
+function toggleLocalEngine() {
+    const sensevoice = document.getElementById('LOCAL_ASR_ENGINE').value === 'sensevoice';
+    document.getElementById('sensevoice-settings').style.display = sensevoice ? 'block' : 'none';
+    document.getElementById('whisper-settings').style.display = sensevoice ? 'none' : 'block';
+}
 
 function toggleProviderSettings() {
     const provider = document.getElementById('ASR_PROVIDER').value;
@@ -153,6 +196,10 @@ async function loadConfig() {
         loadedConfig = config;
         document.getElementById('ASR_PROVIDER').value = config.ASR_PROVIDER;
         document.getElementById('ASR_MODEL').value = config.ASR_MODEL;
+        document.getElementById('WHISPER_MODEL').value = config.WHISPER_MODEL;
+        document.getElementById('LOCAL_ASR_ENGINE').value = config.LOCAL_ASR_ENGINE;
+        updateWhisperModelHint();
+        toggleLocalEngine();
         document.getElementById('MAX_VIDEO_DURATION').value = config.MAX_VIDEO_DURATION;
         document.getElementById('OUTPUT_DIR').value = config.OUTPUT_DIR;
         document.getElementById('OSS_ENABLE_FALLBACK').checked = config.OSS_ENABLE_FALLBACK === 'true';
@@ -185,6 +232,8 @@ function configPayload() {
         ASR_PROVIDER: document.getElementById('ASR_PROVIDER').value,
         DASHSCOPE_API_KEY: document.getElementById('DASHSCOPE_API_KEY').value.trim(),
         ASR_MODEL: document.getElementById('ASR_MODEL').value,
+        WHISPER_MODEL: document.getElementById('WHISPER_MODEL').value,
+        LOCAL_ASR_ENGINE: document.getElementById('LOCAL_ASR_ENGINE').value,
         MAX_VIDEO_DURATION: document.getElementById('MAX_VIDEO_DURATION').value,
         OUTPUT_DIR: document.getElementById('OUTPUT_DIR').value.trim(),
         OSS_ENABLE_FALLBACK: document.getElementById('OSS_ENABLE_FALLBACK').checked,
@@ -196,6 +245,8 @@ function configPayload() {
     return payload;
 }
 
+document.getElementById('LOCAL_ASR_ENGINE').addEventListener('change', toggleLocalEngine);
+document.getElementById('WHISPER_MODEL').addEventListener('change', updateWhisperModelHint);
 document.getElementById('ASR_PROVIDER').addEventListener('change', toggleProviderSettings);
 document.getElementById('OSS_ENABLE_FALLBACK').addEventListener('change', toggleOSSSettings);
 document.getElementById('reloadConfigBtn').addEventListener('click', loadConfig);

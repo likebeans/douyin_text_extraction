@@ -25,9 +25,11 @@ jobs:
         with:
           enable-cache: true
       - name: Install locked dependencies
-        run: uv sync --locked --all-groups
+        run: uv sync --locked --all-groups --extra local-chinese
+      - name: Check optional Chinese runtime
+        run: uv run --locked --extra local-chinese python -c 'import sherpa_onnx; print(sherpa_onnx.__version__)'
       - name: Run offline tests
-        run: uv run --locked pytest
+        run: uv run --locked --extra local-chinese pytest
       - name: Build wheel
         run: uv build --wheel
       - name: Smoke test installed CLI and Web assets

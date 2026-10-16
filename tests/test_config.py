@@ -18,6 +18,7 @@ from config import Settings
     {"flask_port": 65536},
     {"web_max_concurrent_extractions": 0},
     {"whisper_model": "unknown"},
+    {"local_asr_engine": "unknown"},
 ])
 def test_invalid_config_rejected(values):
     with pytest.raises(ValidationError):

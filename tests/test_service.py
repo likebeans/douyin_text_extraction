@@ -89,6 +89,15 @@ def test_duration_rejected_before_asr(configured, dependencies):
     dependencies[5].assert_not_called()
 
 
+def test_chinese_dependency_preflight(configured, dependencies, monkeypatch):
+    configured.asr_provider = "local"
+    configured.local_asr_engine = "sensevoice"
+    monkeypatch.setattr(service, "SenseVoiceClient", Mock(side_effect=ImportError("sherpa_onnx")))
+    with pytest.raises(ExtractionError, match="uv sync --extra local-chinese"):
+        ExtractionService(configured).extract("https://www.douyin.com/video/1")
+    dependencies[3].assert_not_called()
+
+
 def test_local_dependency_preflight(configured, dependencies, monkeypatch):
     configured.asr_provider = "local"
     monkeypatch.setattr(service, "LocalASRClient", Mock(side_effect=ImportError("whisper")))
@@ -97,10 +106,12 @@ def test_local_dependency_preflight(configured, dependencies, monkeypatch):
     dependencies[3].assert_not_called()
 
 
+@pytest.mark.parametrize("engine", ["whisper", "sensevoice"])
 @pytest.mark.parametrize("cleanup", [True, False])
 @pytest.mark.parametrize("failure", ["download", "audio", "transcribe", None])
-def test_local_workspace_lifecycle(configured, dependencies, monkeypatch, cleanup, failure):
+def test_local_workspace_lifecycle(configured, dependencies, monkeypatch, cleanup, failure, engine):
     configured.asr_provider = "local"
+    configured.local_asr_engine = engine
     configured.cleanup_temp_files = cleanup
     processor = Mock()
     processor.check_ffmpeg.return_value = True
@@ -124,6 +135,7 @@ def test_local_workspace_lifecycle(configured, dependencies, monkeypatch, cleanu
         local.transcribe.return_value = "本地文本"
     monkeypatch.setattr(service, "AudioProcessor", Mock(return_value=processor))
     monkeypatch.setattr(service, "LocalASRClient", Mock(return_value=local))
+    monkeypatch.setattr(service, "SenseVoiceClient", Mock(return_value=local))
     if failure:
         with pytest.raises((ExtractionError, RuntimeError)):
             ExtractionService(configured).extract("https://www.douyin.com/video/1")
@@ -137,6 +149,7 @@ def test_successful_local_result_survives_cleanup_failure(configured, dependenci
     configured.asr_provider = "local"
     configured.ffmpeg_timeout = 85
     configured.download_timeout = 240
+    configured.whisper_model = "small"
     processor = Mock()
     processor.check_ffmpeg.return_value = True
     processor.download_video.side_effect = lambda url, path: path
@@ -145,13 +158,15 @@ def test_successful_local_result_survives_cleanup_failure(configured, dependenci
     local = Mock()
     local.transcribe.return_value = "已成功转写"
     monkeypatch.setattr(service, "AudioProcessor", processor_class)
-    monkeypatch.setattr(service, "LocalASRClient", Mock(return_value=local))
+    local_class = Mock(return_value=local)
+    monkeypatch.setattr(service, "LocalASRClient", local_class)
     cleanup = Mock(side_effect=OSError("cleanup failed"))
     monkeypatch.setattr(service.shutil, "rmtree", cleanup)
 
     result = ExtractionService(configured).extract("https://www.douyin.com/video/1")
 
     assert result.text == "已成功转写"
+    local_class.assert_called_once_with(model="small")
     assert processor_class.call_args.kwargs["ffmpeg_timeout"] == 85
     assert processor_class.call_args.kwargs["download_timeout"] == 240
     cleanup.assert_called_once()

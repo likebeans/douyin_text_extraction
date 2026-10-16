@@ -3,6 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 ARG INSTALL_LOCAL_ASR=false
+ARG INSTALL_CHINESE_ASR=false
 
 RUN python -c "from pathlib import Path; p=Path('/etc/apt/sources.list.d/debian.sources'); p.write_text(p.read_text().replace('http://deb.debian.org', 'https://deb.debian.org'))" \
   && apt-get -o Acquire::Retries=3 update \
@@ -25,12 +26,11 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
 
-# Whisper and its large ML dependencies are opt-in at image build time.
-RUN if [ "$INSTALL_LOCAL_ASR" = "true" ]; then \
-      uv sync --locked --no-dev --extra local; \
-    else \
-      uv sync --locked --no-dev; \
-    fi
+# Local recognition runtimes remain opt-in at image build time.
+RUN set --; \
+    if [ "$INSTALL_LOCAL_ASR" = "true" ]; then set -- "$@" --extra local; fi; \
+    if [ "$INSTALL_CHINESE_ASR" = "true" ]; then set -- "$@" --extra local-chinese; fi; \
+    uv sync --locked --no-dev "$@"
 
 EXPOSE 5000
 

@@ -41,7 +41,7 @@ class LocalASRClient:
         video_url: Optional[str] = None,
     ) -> Optional[str]:
         """Transcribe a local audio file."""
-        console.print("[cyan]🎤 开始本地语音识别（Whisper）...[/cyan]")
+        console.print(f"[cyan]🎤 开始本地语音识别（Whisper {self.model}）...[/cyan]")
         if not audio_path and not video_url:
             console.print("[red]❌ 必须提供 audio_path 或 video_url[/red]")
             return None
@@ -59,10 +59,19 @@ class LocalASRClient:
             with cls._lock:
                 model = cls._models.get(self.model)
                 if model is None:
+                    # Switching models must not retain several large models in memory.
+                    cls._models.clear()
                     model = cls._whisper_module.load_model(self.model)
                     cls._models[self.model] = model
+                # Reset each window's text context to avoid propagating repetition loops.
                 result = model.transcribe(
-                    str(audio_path), language="zh", task="transcribe"
+                    str(audio_path),
+                    language="zh",
+                    task="transcribe",
+                    condition_on_previous_text=False,
+                    beam_size=5,
+                    fp16=model.device.type == "cuda",
+                    verbose=None,
                 )
             text = result.get("text", "").strip()
             console.print(f"[green]✅ 语音识别完成（{len(text)} 字）[/green]")

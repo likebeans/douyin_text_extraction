@@ -15,6 +15,8 @@ CONFIG_ENV_NAMES = (
     "DASHSCOPE_API_KEY",
     "MAX_VIDEO_DURATION",
     "ASR_MODEL",
+    "WHISPER_MODEL",
+    "LOCAL_ASR_ENGINE",
     "OUTPUT_DIR",
     "OSS_ENABLE_FALLBACK",
     "OSS_ACCESS_KEY_ID",
@@ -174,6 +176,10 @@ def test_config_rejects_unknown_fields_invalid_types_and_realtime_models(client)
         {"MAX_VIDEO_DURATION": True},
         {"MAX_VIDEO_DURATION": "3601"},
         {"ASR_MODEL": "paraformer-realtime-v2"},
+        {"WHISPER_MODEL": "large.en"},
+        {"WHISPER_MODEL": "/tmp/untrusted-model.pt"},
+        {"WHISPER_MODEL": ["turbo"]},
+        {"LOCAL_ASR_ENGINE": "unknown"},
         {"OUTPUT_DIR": "safe\nDASHSCOPE_API_KEY=injected"},
     ):
         response = post_config(client, data)
@@ -265,6 +271,43 @@ def test_environment_values_win_and_conflicting_updates_are_rejected(client, mon
     assert update.status_code == 400
     assert "124" not in update.get_data(as_text=True)
     assert "MAX_VIDEO_DURATION=123" not in web_app.ENV_FILE.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("model", ["tiny", "base", "small", "medium", "large", "turbo"])
+def test_local_model_saved_reloaded_and_used_for_next_extraction(client, monkeypatch, model):
+    received = {}
+
+    class Service:
+        def __init__(self, settings):
+            received["model"] = settings.whisper_model
+
+        def extract(self, link):
+            return type("Result", (), {"to_dict": lambda self: {"success": True, "text": "文本"}})()
+
+    monkeypatch.setattr(web_app, "ExtractionService", Service)
+    assert post_config(client, {"WHISPER_MODEL": model}).status_code == 200
+    assert client.get("/api/config").get_json()["config"]["WHISPER_MODEL"] == model
+    assert web_app.load_settings().whisper_model == model
+    assert client.post("/api/extract", json={"link": "https://www.douyin.com/video/1"}).status_code == 200
+    assert received["model"] == model
+
+
+def test_local_engine_saved_and_reloaded(client):
+    assert post_config(client, {"LOCAL_ASR_ENGINE": "sensevoice"}).status_code == 200
+    assert client.get("/api/config").get_json()["config"]["LOCAL_ASR_ENGINE"] == "sensevoice"
+    assert web_app.load_settings().local_asr_engine == "sensevoice"
+    assert post_config(client, {"LOCAL_ASR_ENGINE": "whisper"}).status_code == 200
+    assert web_app.load_settings().local_asr_engine == "whisper"
+
+
+def test_environment_model_cannot_be_overridden_in_web_config(client, monkeypatch):
+    monkeypatch.setenv("WHISPER_MODEL", "small")
+    before = web_app.ENV_FILE.read_bytes()
+    config = client.get("/api/config").get_json()["config"]
+    assert config["WHISPER_MODEL"] == "small"
+    assert "WHISPER_MODEL" in config["ENVIRONMENT_FIELDS"]
+    assert post_config(client, {"WHISPER_MODEL": "turbo"}).status_code == 400
+    assert web_app.ENV_FILE.read_bytes() == before
 
 
 def test_secret_values_are_not_reflected_in_validation_errors(client):

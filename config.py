@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     dashscope_api_key: str = Field(default="", repr=False)
     asr_provider: Literal["dashscope", "local"] = DEFAULT_ASR_PROVIDER
     asr_model: str = Field(default=DEFAULT_ASR_MODEL, min_length=1)
+    local_asr_engine: Literal["whisper", "sensevoice"] = "whisper"
     whisper_model: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "base"
     max_video_duration: int = Field(default=DEFAULT_MAX_VIDEO_DURATION, gt=0)
     output_dir: Path = Path(DEFAULT_OUTPUT_DIR)

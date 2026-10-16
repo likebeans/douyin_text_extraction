@@ -22,6 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 local = ["openai-whisper>=20250625"]
+# Native libraries are separate wheels; pin the matching pair explicitly for uv.
+local-chinese = ["sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8", "numpy>=1.24,<3"]
 
 [project.scripts]
 douyin-extract = "main:main"

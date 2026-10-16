@@ -1,7 +1,9 @@
 import sys
 import threading
 import time
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 from src.local_asr_client import LocalASRClient
 
@@ -19,6 +21,8 @@ def test_whisper_model_is_cached_across_client_instances(tmp_path, monkeypatch):
     transcription_calls = []
 
     class Model:
+        device = SimpleNamespace(type="cpu")
+
         def transcribe(self, path, **kwargs):
             transcription_calls.append((path, kwargs))
             return {"text": " recognized "}
@@ -43,6 +47,8 @@ def test_inference_is_serialized_for_shared_cached_model(tmp_path, monkeypatch):
     active_lock = threading.Lock()
 
     class Model:
+        device = SimpleNamespace(type="cpu")
+
         def transcribe(self, path, **kwargs):
             nonlocal active, maximum_active
             with active_lock:
@@ -69,3 +75,49 @@ def test_inference_is_serialized_for_shared_cached_model(tmp_path, monkeypatch):
 
     assert results == ["ok", "ok", "ok"]
     assert maximum_active == 1
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_decoding_resets_context_and_preserves_spoken_repetitions(tmp_path, monkeypatch, device):
+    spoken = "走吧，走吧。吃吃吃！过了一会儿又说：走吧。"
+    received = {}
+    model = SimpleNamespace(device=SimpleNamespace(type=device))
+
+    def transcribe(path, **options):
+        received.update(options)
+        return {"text": f"  {spoken}  "}
+
+    model.transcribe = transcribe
+    _fake_whisper(monkeypatch, model)
+    monkeypatch.setattr(LocalASRClient, "_models", {})
+    monkeypatch.setattr(LocalASRClient, "_whisper_module", None)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"wav")
+
+    assert LocalASRClient("base").transcribe(audio_path) == spoken
+    assert received["condition_on_previous_text"] is False
+    assert received["beam_size"] == 5
+    assert received["fp16"] is (device == "cuda")
+    # Keep Whisper's low-confidence retry and silence defaults; do not inject words.
+    assert "temperature" not in received
+    assert "initial_prompt" not in received
+    assert "no_speech_threshold" not in received
+
+
+def test_changing_models_releases_previous_cached_model(tmp_path, monkeypatch):
+    model = SimpleNamespace(
+        device=SimpleNamespace(type="cpu"),
+        transcribe=lambda *args, **kwargs: {"text": "文本"},
+    )
+    load_calls = _fake_whisper(monkeypatch, model)
+    monkeypatch.setattr(LocalASRClient, "_models", {})
+    monkeypatch.setattr(LocalASRClient, "_whisper_module", None)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"wav")
+    base = LocalASRClient("base")
+    turbo = LocalASRClient("turbo")
+
+    for client in (base, turbo, turbo, base):
+        assert client.transcribe(audio_path) == "文本"
+        assert list(LocalASRClient._models) == [client.model]
+    assert load_calls == ["base", "turbo", "base"]

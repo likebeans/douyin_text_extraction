@@ -1,6 +1,6 @@
 # 抖音视频文本提取工具
 
-一个通过命令行或本地 Web 界面提取抖音视频语音文本的 Python 工具。默认使用阿里云 DashScope；也可安装可选的本地 Whisper 依赖。项目版本为 `0.3.0`，当前接口和平台页面变化可能影响解析与转写。
+一个通过命令行或本地 Web 界面提取抖音视频语音文本的 Python 工具。默认使用阿里云 DashScope；也可安装可选的本地 Whisper 或 SenseVoiceSmall 依赖。项目版本为 `0.3.0`，当前接口和平台页面变化可能影响解析与转写。
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -8,7 +8,7 @@
 ## 功能
 
 - 从抖音短链接、视频链接或分享文本解析视频。
-- 通过 DashScope 或本地 Whisper 进行语音识别。
+- 通过 DashScope 或本地 Whisper / SenseVoiceSmall 进行语音识别。
 - CLI 支持 Markdown、纯文本和 JSON 输出，可选择输出路径。
 - Web 页面支持提交提取任务；本机模式可以通过配置页面编辑 `.env`。
 - DashScope 转写失败时，可按需配置 OSS 与 FFmpeg 作为备用流程。
@@ -63,9 +63,20 @@ JSON 模式下，标准输出只包含 JSON，诊断信息写到标准错误。�
 uv sync --extra local
 ```
 
-本地识别还需要系统 FFmpeg。首次加载模型时，Whisper 可能需要下载模型文件。`REQUEST_TIMEOUT` 控制 HTTP 连接和单次读取等待时间；`DOWNLOAD_TIMEOUT` 默认给整个媒体下载 300 秒，`FFMPEG_TIMEOUT` 单独限制 FFmpeg 音频提取进程。
+本地识别还需要系统 FFmpeg。Web 配置页可选择 Whisper 模型；`base` 占用较小，但中文口音、多人对话和背景音乐容易造成错字，可按硬件条件尝试 `small` 或 `turbo`。更大的模型不保证每段音频都更准确，CPU 处理可能明显变慢。工具关闭跨窗口文本提示并启用 beam search，以减少错误上下文引发的循环重复；保留低置信度重试和正常口语重复，不做机械文本去重。首次加载模型时，Whisper 可能需要下载模型文件。`REQUEST_TIMEOUT` 控制 HTTP 连接和单次读取等待时间；`DOWNLOAD_TIMEOUT` 默认给整个媒体下载 300 秒，`FFMPEG_TIMEOUT` 单独限制 FFmpeg 音频提取进程。
 
 分享页有时会返回 HTTP 200，但暂时缺少视频详情。工具会复用会话并按 `RETRY_TIMES` 做有限重试；持续缺数据、明确拒绝访问或非视频内容仍会返回错误，不保证所有链接均可提取。
+
+### 本地中文识别
+
+中文口语可尝试 SenseVoiceSmall，使用 CPU 转写并生成标点：
+
+```bash
+uv sync --extra local-chinese
+ASR_PROVIDER=local LOCAL_ASR_ENGINE=sensevoice uv run --extra local-chinese douyin-extract extract "抖音链接"
+```
+
+Web 配置页也可选择“本地识别 → SenseVoiceSmall”。首次下载约 163 MB，模型会校验后缓存；长音频按低能量位置分段处理，不删除正常口语重复。方言、背景音乐、重叠说话和专业名词仍可能识别错误。SenseVoiceSmall 权重由 FunASR / FunAudioLLM 提供，适用独立模型协议，**不属于项目 MIT 许可**；来源、许可和商用解释见 [识别方式说明](docs/ASR_PROVIDER_GUIDE.md#模型来源与许可)。
 
 ## Web 界面
 
@@ -99,10 +110,13 @@ docker compose down
 
 Compose 将宿主机端口绑定到 `127.0.0.1`，容器内监听 `0.0.0.0:5000`，关闭调试模式，并禁用 Web 配置写入。浏览器打开 Web 页面后输入 `WEB_API_TOKEN` 即可提取；`/api/config` 在此模式下禁用。若需其他设备访问，应由 HTTPS 反向代理转发到本机端口。
 
-镜像默认不包含 Whisper。如需在镜像中安装本地 ASR 依赖：
+镜像默认不包含本地识别引擎。如需安装，选择对应构建选项，并在 `.env` 设置 `ASR_PROVIDER=local` 及 `LOCAL_ASR_ENGINE`：
 
 ```bash
+# Whisper
 INSTALL_LOCAL_ASR=true docker compose up -d --build
+# SenseVoiceSmall（.env 中设置 LOCAL_ASR_ENGINE=sensevoice）
+INSTALL_CHINESE_ASR=true docker compose up -d --build
 ```
 
 Compose 挂载 `./output` 和 `./temp` 作为数据目录。`.env` 不会复制进镜像；Compose 通过容器环境变量注入配置。

@@ -114,10 +114,16 @@ def config_check():
         console.print(f"DashScope API Key：{'已配置' if current_settings.dashscope_api_key.strip() else '未配置'}")
         console.print(f"模型：{current_settings.asr_model}")
     else:
-        available = importlib.util.find_spec("whisper") is not None
+        chinese = current_settings.local_asr_engine == "sensevoice"
+        module = "sherpa_onnx" if chinese else "whisper"
+        extra = "local-chinese" if chinese else "local"
+        available = importlib.util.find_spec(module) is not None
+        if chinese:
+            available = available and importlib.util.find_spec("numpy") is not None
         valid = valid and available
-        console.print(f"Whisper：{'已安装' if available else '未安装，请运行 uv sync --extra local'}")
-        console.print(f"模型：{current_settings.whisper_model}")
+        console.print(f"本地引擎：{current_settings.local_asr_engine}")
+        console.print("依赖：已安装" if available else f"依赖：未安装，请运行 uv sync --extra {extra}")
+        console.print(f"模型：{'SenseVoiceSmall int8' if chinese else current_settings.whisper_model}")
 
     ffmpeg_available = AudioProcessor().check_ffmpeg()
     console.print(f"FFmpeg：{'已安装' if ffmpeg_available else '未安装'}")
